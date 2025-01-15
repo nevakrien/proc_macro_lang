@@ -2,7 +2,6 @@
 name = "proc_macro_lang"
 version = "0.1.0"
 edition = "2021"
-include = ["/src", "/core_engine", "/runtime", "/lang_macro"]
 
 [workspace]
 members = [
@@ -11,12 +10,8 @@ members = [
     "runtime"
 ]
 
-[workspace.dependencies]
-proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
-syn = {version="2.0.96",features=[]}
-
-
 [dependencies]
 lang_macro = { path = "lang_macro" }
 core_engine = { path = "core_engine" }
 runtime = { path = "runtime" }
+

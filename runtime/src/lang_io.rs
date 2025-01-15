@@ -1,3 +1,6 @@
+use core_engine::syn;
+use core_engine::proc_macro2;
+
 use proc_macro2::{Span};
 use std::fmt;
 use std::path::Path;

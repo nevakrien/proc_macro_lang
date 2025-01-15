@@ -8,5 +8,4 @@ proc-macro = true
 
 
 [dependencies]
-syn = { workspace = true }
-proc-macro2 = { workspace = true }
+core_engine = { path = "../core_engine" }

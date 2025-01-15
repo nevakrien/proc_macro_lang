@@ -17,7 +17,7 @@ these types would be included because of rusts parsing:
 
 note that specifcly braces are NOT allowed as their own type. this is a convention from the rust parsing setup to force brackets to be balanced. it is not a bad idea to do this for our languge as well. if for some reason you need single braces using < > can work or any other delimiter.
 
-types we add:
+types we should add:
 1. array\<T\> (dynamic array)
 2. int (i64 allways) 
 3. type (for our languge not rust)
@@ -49,6 +49,10 @@ syntax highlighting would likely be missing to avoid diffrent views between the 
 package managment would be non existent since we dont want to clash with cargo.
 
 tooling in general would likely be mostly reliant on rust.
+
+# Rc memory
+so for Rced memory its EXTREMLY important to avoid cycles. one way to do so is imutability.
+once an Rc was created in a struct it is never changed for any reason. this enforces the Rc refrence graph to be a directed asyclic graph.
 
 # Plan
 we would have the following modules
