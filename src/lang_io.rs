@@ -13,15 +13,16 @@ impl <'a>  LineMap<'a>{
     }
 
     pub fn get_line(&self,i:usize) -> Option<&'a str>{
-        self.lines.get(i).map(|v| &**v)
+        self.lines.get(i).map(|v| *v)
     }
 }
 
-/// Wrapper for `syn::Error` with additional source file path and source text for enhanced error reporting.
+/// Wrapper for `syn::Error` with additional source info for enhanced error reporting.
+/// this type is only used when we parse tokens outside of a proc_macro.
 pub struct SynErrorWrapper<'a,'b> {
-    error: Error,
-    source_path: &'a Path,
-    lines: &'b LineMap<'a>,
+    pub error: Error,
+    pub source_path: &'a Path,
+    pub lines: &'b LineMap<'a>,
 }
 
 impl<'a,'b> SynErrorWrapper<'a,'b> {
@@ -63,34 +64,6 @@ impl fmt::Display for SynErrorWrapper<'_, '_> {
     }
 }
 
-// //TODO fix this to take the entire line and not just the specific defective token
-// impl fmt::Display for SynErrorWrapper<'_, '_> {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         // Iterate over all errors, including child errors.
-//         for error in self.error.clone().into_iter() {
-//             let span: Span = error.span();
-//             let start = span.start(); // LineColumn struct
-//             let line = start.line;
-//             let column = start.column;
-
-//             // Extract the byte range of the span
-//             let byte_range = span.byte_range();
-//             let source_snippet = self.extract_source_snippet(byte_range);
-
-//             writeln!(
-//                 f,
-//                 "Error: {error}\n{}:{}:{}:\n{}\n^",
-//                 self.source_path.display(),
-//                 line,
-//                 column,
-//                 source_snippet,
-//             )?;
-//         }
-//         Ok(())
-//     }
-// }
-
-
 
 impl fmt::Debug for SynErrorWrapper<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -114,12 +87,16 @@ fn test_parse_files_with_errors() {
     let fake_file1_content = r#"
         fn incomplete_function() {
             let x = )
+            ();
+            a
+            )
     "#; // Syntax error: Unclosed parenthesis
 
     let fake_file2_content = r#"
         struct TestStruct {
             field1: u32,
             field2: u32 u32
+            field2: u1 u32
         }
     "#; // Syntax error: Repeated type
 
@@ -130,7 +107,7 @@ fn test_parse_files_with_errors() {
     let mut errors = Vec::new();
 
     // Parse fake file 1 and intentionally trigger syntax errors
-    if let Err(err) = syn::parse_str::<syn::File>(fake_file1_content) {
+    if let Err(err) = syn::parse_str::<syn::DeriveInput>(fake_file1_content) {
         errors.push(SynErrorWrapper::new(
             err,
             fake_file1_path,
@@ -139,7 +116,7 @@ fn test_parse_files_with_errors() {
     }
 
     // Parse fake file 2 and intentionally trigger syntax errors
-    if let Err(err) = syn::parse_str::<syn::File>(fake_file2_content) {
+    if let Err(err) = syn::parse_str::<syn::DeriveInput>(fake_file2_content) {
         errors.push(SynErrorWrapper::new(
             err,
             fake_file2_path,
@@ -161,3 +138,4 @@ fn test_parse_files_with_errors() {
         "Test encountered no syntax errors. Expected syntax errors to occur."
     );
 }
+
