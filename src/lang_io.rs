@@ -32,6 +32,7 @@ impl<'a> SynErrorWrapper<'a> {
     }
 }
 
+//TODO fix this to take the entire line and not just the specific defective token
 impl fmt::Display for SynErrorWrapper<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Iterate over all errors, including child errors.
@@ -47,12 +48,11 @@ impl fmt::Display for SynErrorWrapper<'_> {
 
             writeln!(
                 f,
-                "Error: {error}\n{}:{}:{}:\n    {}\n    {}^",
+                "Error: {error}\n{}:{}:{}:\n{}\n^",
                 self.source_path.display(),
                 line,
                 column,
                 source_snippet,
-                " ".repeat(column)
             )?;
         }
         Ok(())
