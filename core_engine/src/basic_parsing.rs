@@ -1,5 +1,5 @@
-use syn::parse::{Parse,ParseBuffer};
 use proc_macro2::TokenStream;
+use syn::parse::{Parse, ParseBuffer};
 
 #[cfg(test)]
 use syn::parse_str;
@@ -25,5 +25,4 @@ fn literal_tokens_parse() {
     // println!("parsed {}",x.0.to_string());
     parse_str::<TokenLiteral>("let x = 42;").unwrap_err();
     parse_str::<TokenLiteral>("(let x = 42; [])").unwrap_err();
-
 }

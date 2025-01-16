@@ -1,36 +1,38 @@
-use core_engine::syn;
 use core_engine::proc_macro2;
+use core_engine::syn;
 
-use proc_macro2::{Span};
+use proc_macro2::Span;
 use std::fmt;
 use std::path::Path;
 use syn::Error;
 
-pub struct LineMap<'a>{
+pub struct LineMap<'a> {
     pub lines: Vec<&'a str>,
 }
 
-impl <'a>  LineMap<'a>{
-    pub fn new(text:&'a str) -> Self{
-        LineMap{lines:text.lines().collect()}
+impl<'a> LineMap<'a> {
+    pub fn new(text: &'a str) -> Self {
+        LineMap {
+            lines: text.lines().collect(),
+        }
     }
 
-    pub fn get_line(&self,i:usize) -> Option<&'a str>{
-        self.lines.get(i).map(|v| *v)
+    pub fn get_line(&self, i: usize) -> Option<&'a str> {
+        self.lines.get(i).copied()
     }
 }
 
 /// Wrapper for `syn::Error` with additional source info for enhanced error reporting.
 /// this type is only used when we parse tokens outside of a proc_macro.
-pub struct SynErrorWrapper<'a,'b> {
+pub struct SynErrorWrapper<'a, 'b> {
     pub error: Error,
     pub source_path: &'a Path,
     pub lines: &'b LineMap<'a>,
 }
 
-impl<'a,'b> SynErrorWrapper<'a,'b> {
+impl<'a, 'b> SynErrorWrapper<'a, 'b> {
     /// Create a new `SynErrorWrapper` from a single error, source file path, and source text.
-    pub fn new(error: Error, source_path: &'a Path,lines:&'b LineMap<'a>) -> Self {
+    pub fn new(error: Error, source_path: &'a Path, lines: &'b LineMap<'a>) -> Self {
         Self {
             error,
             source_path,
@@ -67,7 +69,6 @@ impl fmt::Display for SynErrorWrapper<'_, '_> {
     }
 }
 
-
 impl fmt::Debug for SynErrorWrapper<'_, '_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt::Display::fmt(self, f) // Use the Display implementation
@@ -75,10 +76,6 @@ impl fmt::Debug for SynErrorWrapper<'_, '_> {
 }
 
 impl std::error::Error for SynErrorWrapper<'_, '_> {}
-
-
-
-
 
 #[test]
 fn test_parse_files_with_errors() {
@@ -111,20 +108,12 @@ fn test_parse_files_with_errors() {
 
     // Parse fake file 1 and intentionally trigger syntax errors
     if let Err(err) = syn::parse_str::<syn::DeriveInput>(fake_file1_content) {
-        errors.push(SynErrorWrapper::new(
-            err,
-            fake_file1_path,
-            &lines1,
-        ));
+        errors.push(SynErrorWrapper::new(err, fake_file1_path, &lines1));
     }
 
     // Parse fake file 2 and intentionally trigger syntax errors
     if let Err(err) = syn::parse_str::<syn::DeriveInput>(fake_file2_content) {
-        errors.push(SynErrorWrapper::new(
-            err,
-            fake_file2_path,
-            &lines2,
-        ));
+        errors.push(SynErrorWrapper::new(err, fake_file2_path, &lines2));
     }
 
     // Report errors without panicking
@@ -141,4 +130,3 @@ fn test_parse_files_with_errors() {
         "Test encountered no syntax errors. Expected syntax errors to occur."
     );
 }
-

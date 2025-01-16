@@ -1,140 +1,132 @@
-use syn::parse::discouraged::Speculative;
-use syn::parse::{Parse,ParseBuffer};
-use std::rc::Rc;
-use proc_macro2::{TokenStream, TokenTree,Delimiter};
 use crate::basic_parsing::TokenLiteral;
-
+use proc_macro2::{Delimiter, TokenStream, TokenTree};
+use std::rc::Rc;
+use syn::parse::{Parse, ParseBuffer};
 
 #[derive(Debug)]
-pub enum Pattern{
-	Exact(TokenStream),
-	
-	//rusts core tokens
-	Literal,
-	Name,
-	Punc(char),
-	Paren(Rc<Pattern>,Delimiter),
-	
-	//optionals
-	Any,
-	Not(Rc<Pattern>),
-	Maybe(Rc<Pattern>),
+pub enum Pattern {
+    Exact(TokenStream),
 
-	//composite
-	Sequnce(Box<[Rc<Pattern>]>),
-	OneOf(Box<[Rc<Pattern>]>),
+    //rusts core tokens
+    Literal,
+    Name,
+    Punc(char),
+    Paren(Rc<Pattern>, Delimiter),
 
-	//unbounded
-	Many0(Rc<Pattern>),
-	Many1(Rc<Pattern>),
+    //optionals
+    Any,
+    Not(Rc<Pattern>),
+    Maybe(Rc<Pattern>),
 
-	EOF,
+    //composite
+    Sequnce(Box<[Rc<Pattern>]>),
+    OneOf(Box<[Rc<Pattern>]>),
+
+    //unbounded
+    Many0(Rc<Pattern>),
+    Many1(Rc<Pattern>),
+
+    EOF,
 }
 
-///currently a place holder 
+///currently a place holder
 #[derive(Debug)]
 pub struct MatchError;
 
-
 impl Pattern {
-
-   pub fn matches<I>(&self, input: &mut I) -> Result<(), MatchError> 
-   where I: Iterator<Item = TokenTree> + Clone,
-   {
-     match self {
-         Pattern::Exact(stream) => {
-             parse_exact_match(stream.clone(), input).map_err(|_| MatchError)
-         }
-         Pattern::Any => {
-             if input.next().is_some() {
-                 Ok(())
-             } else {
-                 Err(MatchError)
-             }
-         }
-         Pattern::Maybe(inner) => {
-             let mut clone_iter = input.clone();
-             if inner.matches(&mut clone_iter).is_ok() {
-                 *input = clone_iter;
-             }
-             Ok(())
-         }
-         Pattern::Literal => {
-             match input.next() {
-                 Some(TokenTree::Literal(_)) => Ok(()),
-                 _ => Err(MatchError),
-             }
-         }
-         Pattern::Name => {
-             match input.next() {
-                 Some(TokenTree::Ident(_)) => Ok(()),
-                 _ => Err(MatchError),
-             }
-         }
-         Pattern::Punc(expected_char) => {
-             match input.next() {
-                 Some(TokenTree::Punct(punct)) if punct.as_char() == *expected_char => Ok(()),
-                 _ => Err(MatchError),
-             }
-         }
-         Pattern::Paren(inner, delimiter) => {
-             match input.next() {
-                 Some(TokenTree::Group(group)) if group.delimiter() == *delimiter => {
-                     let mut inner_iter = group.stream().into_iter();
-                     inner.matches(&mut inner_iter)
-                 }
-                 _ => Err(MatchError),
-             }
-         }
-         Pattern::Sequnce(patterns) => {
-             for pattern in patterns.iter() {
-                 pattern.matches(input)?;
-             }
-             Ok(())
-         }
-         Pattern::OneOf(patterns) => {
-             for pattern in patterns.iter() {
-                 let mut clone_iter = input.clone();
-                 if pattern.matches(&mut clone_iter).is_ok() {
-                     *input = clone_iter;
-                     return Ok(());
-                 }
-             }
-             Err(MatchError)
-         }
-         Pattern::Many0(inner) => {
-             while inner.matches(input).is_ok() {}
-             Ok(())
-         }
-         Pattern::Many1(inner) => {
-             if inner.matches(input).is_err() {
-                 return Err(MatchError);
-             }
-             while inner.matches(input).is_ok() {}
-             Ok(())
-         }
-         Pattern::Not(inner) => {
-             if inner.matches(input).is_err() {
-                 Ok(())
-             } else {
-                 Err(MatchError)
-             }
-         }
-         Pattern::EOF => {
-             if input.next().is_none() {
-                 Ok(())
-             } else {
-                 Err(MatchError)
-             }
-         }
-      }
-   }
+    pub fn matches<I>(&self, input: &mut I) -> Result<(), MatchError>
+    where
+        I: Iterator<Item = TokenTree> + Clone,
+    {
+        match self {
+            Pattern::Exact(stream) => {
+                parse_exact_match(stream.clone(), input).map_err(|_| MatchError)
+            }
+            Pattern::Any => {
+                if input.next().is_some() {
+                    Ok(())
+                } else {
+                    Err(MatchError)
+                }
+            }
+            Pattern::Maybe(inner) => {
+                let mut clone_iter = input.clone();
+                if inner.matches(&mut clone_iter).is_ok() {
+                    *input = clone_iter;
+                }
+                Ok(())
+            }
+            Pattern::Literal => match input.next() {
+                Some(TokenTree::Literal(_)) => Ok(()),
+                _ => Err(MatchError),
+            },
+            Pattern::Name => match input.next() {
+                Some(TokenTree::Ident(_)) => Ok(()),
+                _ => Err(MatchError),
+            },
+            Pattern::Punc(expected_char) => match input.next() {
+                Some(TokenTree::Punct(punct)) if punct.as_char() == *expected_char => Ok(()),
+                _ => Err(MatchError),
+            },
+            Pattern::Paren(inner, delimiter) => match input.next() {
+                Some(TokenTree::Group(group)) if group.delimiter() == *delimiter => {
+                    let mut inner_iter = group.stream().into_iter();
+                    inner.matches(&mut inner_iter)
+                }
+                _ => Err(MatchError),
+            },
+            Pattern::Sequnce(patterns) => {
+                for pattern in patterns.iter() {
+                    pattern.matches(input)?;
+                }
+                Ok(())
+            }
+            Pattern::OneOf(patterns) => {
+                for pattern in patterns.iter() {
+                    let mut clone_iter = input.clone();
+                    if pattern.matches(&mut clone_iter).is_ok() {
+                        *input = clone_iter;
+                        return Ok(());
+                    }
+                }
+                Err(MatchError)
+            }
+            Pattern::Many0(inner) => {
+                while inner.matches(input).is_ok() {}
+                Ok(())
+            }
+            Pattern::Many1(inner) => {
+                if inner.matches(input).is_err() {
+                    return Err(MatchError);
+                }
+                while inner.matches(input).is_ok() {}
+                Ok(())
+            }
+            Pattern::Not(inner) => {
+                if inner.matches(input).is_err() {
+                    Ok(())
+                } else {
+                    Err(MatchError)
+                }
+            }
+            Pattern::EOF => {
+                if input.next().is_none() {
+                    Ok(())
+                } else {
+                    Err(MatchError)
+                }
+            }
+        }
+    }
 }
 
 ///Compares an expected `TokenStream` to an actual `IntoIter`
 //consuming from the iter in the process.
 ///Note that on fail this could overconsume the end of a Group.
-pub fn parse_exact_match<I: Iterator<Item = TokenTree>>(expected: TokenStream, actual_iter: &mut I) -> Result<(), (TokenTree, TokenTree)> {
+pub fn parse_exact_match<I: Iterator<Item = TokenTree>>(
+    expected: TokenStream,
+    actual_iter: &mut I,
+) -> Result<(), (TokenTree, TokenTree)> {
     for expected_token in expected.into_iter() {
         match actual_iter.next() {
             Some(actual_token) => {
@@ -143,7 +135,10 @@ pub fn parse_exact_match<I: Iterator<Item = TokenTree>>(expected: TokenStream, a
                         if expected_group.delimiter() == actual_group.delimiter() {
                             //this can overconsume on fail because we are making a new stream
                             //however on sucesses it will allways consume exacly enough
-                            parse_exact_match(expected_group.stream(), &mut actual_group.stream().into_iter())?;
+                            parse_exact_match(
+                                expected_group.stream(),
+                                &mut actual_group.stream().into_iter(),
+                            )?;
                             true
                         } else {
                             false
@@ -178,18 +173,16 @@ pub fn parse_exact_match<I: Iterator<Item = TokenTree>>(expected: TokenStream, a
 }
 
 impl Parse for Pattern {
-	///tries to find something 
-	fn parse(input: &ParseBuffer<'_>) -> Result<Self, syn::Error> { 
-		//[tokens]
-		if let Ok(lit) = TokenLiteral::parse(&input){
-			return Ok(Pattern::Exact(lit.0));
-		}
+    ///tries to find something
+    fn parse(input: &ParseBuffer<'_>) -> Result<Self, syn::Error> {
+        //[tokens]
+        if let Ok(lit) = TokenLiteral::parse(input) {
+            return Ok(Pattern::Exact(lit.0));
+        }
 
-
-		todo!() 
-	}
+        todo!()
+    }
 }
-
 
 #[test]
 fn test_pattern_matches() {
@@ -217,7 +210,6 @@ fn test_pattern_matches() {
         let mut input = "something_else".parse::<TokenStream>().unwrap().into_iter();
         pattern.matches(&mut input).unwrap();
         assert!(input.next().is_some());
-
     }
 
     // Test: Literal match
@@ -228,7 +220,11 @@ fn test_pattern_matches() {
 
         let mut input = "not_literal".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected Literal match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected Literal match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Name match
@@ -239,7 +235,11 @@ fn test_pattern_matches() {
 
         let mut input = "123".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected Name match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected Name match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Punctuation match
@@ -250,7 +250,11 @@ fn test_pattern_matches() {
 
         let mut input = "-".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected Punctuation match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected Punctuation match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Parenthesized pattern
@@ -264,7 +268,11 @@ fn test_pattern_matches() {
 
         let mut input = "{inner}".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected Parenthesized match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected Parenthesized match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Sequence pattern
@@ -292,7 +300,11 @@ fn test_pattern_matches() {
 
         let mut input = "c".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected OneOf match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected OneOf match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Many0 pattern
@@ -310,7 +322,11 @@ fn test_pattern_matches() {
 
         let mut input = "".parse::<TokenStream>().unwrap().into_iter();
         let result = pattern.matches(&mut input);
-        assert!(result.is_err(), "Expected Many1 match to fail, got {:?}", result);
+        assert!(
+            result.is_err(),
+            "Expected Many1 match to fail, got {:?}",
+            result
+        );
     }
 
     // Test: Complex hierarchy (3 levels deep and 2 branches wide)
@@ -339,7 +355,7 @@ fn test_pattern_matches() {
 
 #[test]
 fn test_parse_exact_match() {
-	use proc_macro2::Delimiter;
+    use proc_macro2::Delimiter;
 
     // Test 1: Simple token match
     {
@@ -445,6 +461,6 @@ fn test_parse_exact_match() {
     {
         let expected: TokenStream = "a b".parse().unwrap();
         let mut actual_iter = "a b c;".parse::<TokenStream>().unwrap().into_iter();
-			parse_exact_match(expected, &mut actual_iter).unwrap();
+        parse_exact_match(expected, &mut actual_iter).unwrap();
     }
 }
