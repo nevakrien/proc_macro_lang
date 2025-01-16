@@ -1,4 +1,3 @@
-use proc_macro2::Span;
 use std::collections::HashMap;
 use crate::pattern::Pattern;
 use std::rc::Rc;
@@ -303,6 +302,8 @@ impl From<CodeType> for Type {
 
 #[test]
 fn equality() {
+use proc_macro2::Span;
+	
 	let a :Type= (0).into();
 	let b :Type= (8).into();
 	assert_eq!(a,b);
