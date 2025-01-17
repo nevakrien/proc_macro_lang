@@ -57,7 +57,7 @@ pub struct DeclPat {
     //declared pattern
     unique: Unique,
     pub source_code: proc_macro2::TokenStream,
-    pub pattern: Pattern,
+    pub pattern: Box<[Pattern]>,//args 1 by 1
 }
 
 impl PartialEq for DeclPat {

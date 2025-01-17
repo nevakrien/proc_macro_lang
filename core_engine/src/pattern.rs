@@ -9,7 +9,7 @@ pub enum Pattern {
 
     //rusts core tokens
     Literal,
-    Name,
+    Word,
     Punc(char),
     Paren(Rc<Pattern>, Delimiter),
 
@@ -60,7 +60,7 @@ impl Pattern {
                 Some(TokenTree::Literal(_)) => Ok(()),
                 _ => Err(MatchError),
             },
-            Pattern::Name => match input.next() {
+            Pattern::Word => match input.next() {
                 Some(TokenTree::Ident(_)) => Ok(()),
                 _ => Err(MatchError),
             },
@@ -227,9 +227,9 @@ fn test_pattern_matches() {
         );
     }
 
-    // Test: Name match
+    // Test: Word match
     {
-        let pattern = Pattern::Name;
+        let pattern = Pattern::Word;
         let mut input = "identifier".parse::<TokenStream>().unwrap().into_iter();
         pattern.matches(&mut input).unwrap();
 
@@ -237,7 +237,7 @@ fn test_pattern_matches() {
         let result = pattern.matches(&mut input);
         assert!(
             result.is_err(),
-            "Expected Name match to fail, got {:?}",
+            "Expected Word match to fail, got {:?}",
             result
         );
     }
@@ -278,11 +278,11 @@ fn test_pattern_matches() {
     // Test: Sequence pattern
     {
         let pattern = Pattern::Sequnce(Box::new([
-            Rc::new(Pattern::Name),
+            Rc::new(Pattern::Word),
             Rc::new(Pattern::Punc('=')),
             Rc::new(Pattern::Literal),
         ]));
-        let mut input = "var_name = 42".parse::<TokenStream>().unwrap().into_iter();
+        let mut input = "var_Word = 42".parse::<TokenStream>().unwrap().into_iter();
         pattern.matches(&mut input).unwrap();
     }
 
@@ -334,7 +334,7 @@ fn test_pattern_matches() {
         let pattern = Pattern::Sequnce(Box::new([
             Rc::new(Pattern::Paren(
                 Rc::new(Pattern::Sequnce(Box::new([
-                    Rc::new(Pattern::Name),
+                    Rc::new(Pattern::Word),
                     Rc::new(Pattern::Punc(',')),
                     Rc::new(Pattern::Literal),
                 ]))),
@@ -345,7 +345,7 @@ fn test_pattern_matches() {
                 Rc::new(Pattern::Exact("branch2".parse().unwrap())),
             ]))),
         ]));
-        let mut input = "(var_name, 42) branch1"
+        let mut input = "(var_word, 42) branch1"
             .parse::<TokenStream>()
             .unwrap()
             .into_iter();
