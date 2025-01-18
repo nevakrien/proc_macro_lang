@@ -1,3 +1,10 @@
+use crate::basic_parsing::DelParser;
+use crate::basic_parsing::Combinator;
+use crate::basic_parsing::BasicCombinator;
+use crate::basic_parsing::{LiteralCombinator,WordCombinator,PuncCombinator,GroupCombinator,AnyCombinator};
+
+
+use std::fmt;
 use syn::buffer::TokenBuffer;
 use syn::buffer::Cursor;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
@@ -6,360 +13,261 @@ use std::rc::Rc;
 
 #[derive(Debug)]
 pub enum Pattern {
-    Exact(TokenStream),
-    Delimited(Rc<Pattern>, Delimiter),
-    
-
-    //rusts core tokens
-    Literal,
-    Word,
-    Punc,
-    Paren,
+	Exact(ExactTokens),
+	Delimited(Rc<Pattern>, Delimiter),
 
 
-    //optionals
-    Any,
-    Ignore(Rc<Pattern>),//ignore the tokens of this pattern but still parse it
-    Not(Rc<Pattern>),
-    Maybe(Rc<Pattern>),
+	//rusts core tokens
+	Literal,
+	Word,
+	Punc,
+	Group,
 
-    //composite
-    Sequnce(Box<[Rc<Pattern>]>),
-    OneOf(Box<[Rc<Pattern>]>),
 
-    //unbounded
-    Many0(Rc<Pattern>),
-    Many1(Rc<Pattern>),
+	//optionals
+	Any,
+	Ignore(Rc<Pattern>),//ignore the tokens of this pattern but still parse it
+	Not(Rc<Pattern>),
+	Maybe(Rc<Pattern>),
 
-    EOF,
+	//composite
+	Sequnce(Box<[Rc<Pattern>]>),
+	OneOf(Box<[Rc<Pattern>]>),
+
+	//unbounded
+	Many0(Rc<Pattern>),
+	Many1(Rc<Pattern>),
 }
 
-// ///currently a place holder
-// #[derive(Debug)]
-// pub struct MatchError;
+impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 
-// impl Pattern {
-//     pub fn matches<I>(&self, input: &mut I) -> Result<(), MatchError>
-//     where
-//         I: Iterator<Item = TokenTree> + Clone,
-//     {
-//         match self {
-//             Pattern::Exact(stream) => {
-//                 parse_exact_match(stream.clone(), input).map_err(|_| MatchError)
-//             }
-//             Pattern::Any => {
-//                 if input.next().is_some() {
-//                     Ok(())
-//                 } else {
-//                     Err(MatchError)
-//                 }
-//             }
-//             Pattern::Maybe(inner) => {
-//                 let mut clone_iter = input.clone();
-//                 if inner.matches(&mut clone_iter).is_ok() {
-//                     *input = clone_iter;
-//                 }
-//                 Ok(())
-//             }
-//             Pattern::Literal => match input.next() {
-//                 Some(TokenTree::Literal(_)) => Ok(()),
-//                 _ => Err(MatchError),
-//             },
-//             Pattern::Word => match input.next() {
-//                 Some(TokenTree::Ident(_)) => Ok(()),
-//                 _ => Err(MatchError),
-//             },
-//             Pattern::Punc(expected_char) => match input.next() {
-//                 Some(TokenTree::Punct(punct)) if punct.as_char() == *expected_char => Ok(()),
-//                 _ => Err(MatchError),
-//             },
-//             Pattern::Paren(inner, delimiter) => match input.next() {
-//                 Some(TokenTree::Group(group)) if group.delimiter() == *delimiter => {
-//                     let mut inner_iter = group.stream().into_iter();
-//                     inner.matches(&mut inner_iter)
-//                 }
-//                 _ => Err(MatchError),
-//             },
-//             Pattern::Sequnce(patterns) => {
-//                 for pattern in patterns.iter() {
-//                     pattern.matches(input)?;
-//                 }
-//                 Ok(())
-//             }
-//             Pattern::OneOf(patterns) => {
-//                 for pattern in patterns.iter() {
-//                     let mut clone_iter = input.clone();
-//                     if pattern.matches(&mut clone_iter).is_ok() {
-//                         *input = clone_iter;
-//                         return Ok(());
-//                     }
-//                 }
-//                 Err(MatchError)
-//             }
-//             Pattern::Many0(inner) => {
-//                 while inner.matches(input).is_ok() {}
-//                 Ok(())
-//             }
-//             Pattern::Many1(inner) => {
-//                 if inner.matches(input).is_err() {
-//                     return Err(MatchError);
-//                 }
-//                 while inner.matches(input).is_ok() {}
-//                 Ok(())
-//             }
-//             Pattern::Not(inner) => {
-//                 if inner.matches(input).is_err() {
-//                     Ok(())
-//                 } else {
-//                     Err(MatchError)
-//                 }
-//             }
-//             Pattern::EOF => {
-//                 if input.next().is_none() {
-//                     Ok(())
-//                 } else {
-//                     Err(MatchError)
-//                 }
-//             }
-//         }
-//     }
-// }
-
-// ///Compares an expected `TokenStream` to an actual `IntoIter`
-// //consuming from the iter in the process.
-// ///Note that on fail this could overconsume the end of a Group.
-// pub fn parse_exact_match<I: Iterator<Item = TokenTree>>(
-//     expected: TokenStream,
-//     actual_iter: &mut I,
-// ) -> Result<(), (TokenTree, TokenTree)> {
-//     for expected_token in expected.into_iter() {
-//         match actual_iter.next() {
-//             Some(actual_token) => {
-//                 let matches = match (&expected_token, &actual_token) {
-//                     (TokenTree::Group(expected_group), TokenTree::Group(actual_group)) => {
-//                         if expected_group.delimiter() == actual_group.delimiter() {
-//                             //this can overconsume on fail because we are making a new stream
-//                             //however on sucesses it will allways consume exacly enough
-//                             parse_exact_match(
-//                                 expected_group.stream(),
-//                                 &mut actual_group.stream().into_iter(),
-//                             )?;
-//                             true
-//                         } else {
-//                             false
-//                         }
-//                     }
-//                     (TokenTree::Literal(expected_lit), TokenTree::Literal(actual_lit)) => {
-//                         expected_lit.to_string() == actual_lit.to_string()
-//                     }
-//                     (TokenTree::Ident(expected_ident), TokenTree::Ident(actual_ident)) => {
-//                         expected_ident == actual_ident
-//                     }
-//                     (TokenTree::Punct(expected_punct), TokenTree::Punct(actual_punct)) => {
-//                         expected_punct.as_char() == actual_punct.as_char()
-//                     }
-//                     _ => false,
-//                 };
-
-//                 if !matches {
-//                     return Err((expected_token, actual_token));
-//                 }
-//             }
-//             None => {
-//                 return Err((
-//                     expected_token,
-//                     TokenTree::Literal(proc_macro2::Literal::string("<EOF>")),
-//                 ));
-//             }
-//         }
-//     }
-
-//     Ok(())
-// }
-
-// // impl Parse for Pattern {
-// //     ///tries to find something
-// //     fn parse(input: &ParseBuffer<'_>) -> Result<Self, syn::Error> {
-// //         //[tokens]
-// //         if let Ok(lit) = TokenLiteral::parse(input) {
-// //             return Ok(Pattern::Exact(lit.0));
-// //         }
-
-// //         todo!()
-// //     }
-// // }
-
-// #[test]
-// fn test_pattern_matches() {
-//     // Test: Exact match
-//     {
-//         let pattern = Pattern::Exact("a b c".parse::<TokenStream>().unwrap());
-//         let mut input = "a b c".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//     }
-
-//     // Test: Any match
-//     {
-//         let pattern = Pattern::Any;
-//         let mut input = "any_token".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//     }
-
-//     // Test: Maybe match
-//     {
-//         let pattern = Pattern::Maybe(Rc::new(Pattern::Exact("optional".parse().unwrap())));
-//         let mut input = "optional".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//         assert!(input.next().is_none());
-
-//         let mut input = "something_else".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//         assert!(input.next().is_some());
-//     }
-
-//     // Test: Literal match
-//     {
-//         let pattern = Pattern::Literal;
-//         let mut input = "42".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "not_literal".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected Literal match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Word match
-//     {
-//         let pattern = Pattern::Word;
-//         let mut input = "identifier".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "123".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected Word match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Punctuation match
-//     {
-//         let pattern = Pattern::Punc('+');
-//         let mut input = "+".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "-".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected Punctuation match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Parenthesized pattern
-//     {
-//         let pattern = Pattern::Paren(
-//             Rc::new(Pattern::Exact("inner".parse().unwrap())),
-//             Delimiter::Parenthesis,
-//         );
-//         let mut input = "(inner)".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "{inner}".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected Parenthesized match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Sequence pattern
-//     {
-//         let pattern = Pattern::Sequnce(Box::new([
-//             Rc::new(Pattern::Word),
-//             Rc::new(Pattern::Punc('=')),
-//             Rc::new(Pattern::Literal),
-//         ]));
-//         let mut input = "var_Word = 42".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//     }
-
-//     // Test: OneOf pattern
-//     {
-//         let pattern = Pattern::OneOf(Box::new([
-//             Rc::new(Pattern::Exact("a".parse().unwrap())),
-//             Rc::new(Pattern::Exact("b".parse().unwrap())),
-//         ]));
-//         let mut input = "a".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "b".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "c".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected OneOf match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Many0 pattern
-//     {
-//         let pattern = Pattern::Many0(Rc::new(Pattern::Literal));
-//         let mut input = "1 2 3".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-//     }
-
-//     // Test: Many1 pattern
-//     {
-//         let pattern = Pattern::Many1(Rc::new(Pattern::Literal));
-//         let mut input = "1 2 3".parse::<TokenStream>().unwrap().into_iter();
-//         pattern.matches(&mut input).unwrap();
-
-//         let mut input = "".parse::<TokenStream>().unwrap().into_iter();
-//         let result = pattern.matches(&mut input);
-//         assert!(
-//             result.is_err(),
-//             "Expected Many1 match to fail, got {:?}",
-//             result
-//         );
-//     }
-
-//     // Test: Complex hierarchy (3 levels deep and 2 branches wide)
-//     {
-//         let pattern = Pattern::Sequnce(Box::new([
-//             Rc::new(Pattern::Paren(
-//                 Rc::new(Pattern::Sequnce(Box::new([
-//                     Rc::new(Pattern::Word),
-//                     Rc::new(Pattern::Punc(',')),
-//                     Rc::new(Pattern::Literal),
-//                 ]))),
-//                 Delimiter::Parenthesis,
-//             )),
-//             Rc::new(Pattern::OneOf(Box::new([
-//                 Rc::new(Pattern::Exact("branch1".parse().unwrap())),
-//                 Rc::new(Pattern::Exact("branch2".parse().unwrap())),
-//             ]))),
-//         ]));
-//         let mut input = "(var_word, 42) branch1"
-//             .parse::<TokenStream>()
-//             .unwrap()
-//             .into_iter();
-//         pattern.matches(&mut input).unwrap();
-//     }
-// }
+	fn parse(&self, input: syn::buffer::Cursor<'a>) -> syn::Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>)> { 
+		match self {
+			Pattern::Exact(parser) => parser.parse(input),
+		   Pattern::Delimited(parser, del) => {
+		   	let (rest,tree)=DelParser(*del).parse(input)?;
+		   	let buff = TokenBuffer::new2(tree);
+		   	let (inner_c,v) = parser.parse(buff.begin())?;
+		   	if !inner_c.eof(){
+		   		let s = match del {
+		   			Delimiter::None =>"<EOF>",
+	        			Delimiter::Parenthesis=> ")",
+	        			Delimiter::Bracket=> "]",
+	        			Delimiter::Brace => "}}",
+		   		};
+		   		return Err(syn::Error::new(
+		   			inner_c.span(),format!("expected {} found: {}",
+		   				s,inner_c.span().source_text()
+		   					.unwrap_or_else(|| "<missing source>".to_string()))
+		   			)
+		   		)
+		   	}
+		   	Ok((rest,v))
+		   },
 
 
-use crate::basic_parsing::Combinator;
+			Pattern::Literal => LiteralCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Literal(x.0)])}),
+			Pattern::Word => WordCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Ident(x.0)])}),
+			Pattern::Punc => PuncCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Punct(x.0)])}),
+			Pattern::Group => GroupCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Group(x.0)])}),
+			Pattern::Any => AnyCombinator::parse(input).map(|(c,x)| {(c,vec![x.0])}),
+		   
+		   Pattern::Ignore(parser) => parser.parse(input).map(|(c,_)| {(c,vec![])}),
+		   Pattern::Not(_) => todo!(),
+		   Pattern::Maybe(parser) => match parser.parse(input){
+		   	Ok(x) => Ok(x),
+		   	Err(_) => Ok((input,vec![]))
+		   },
+
+		   Pattern::Sequnce(seq) => {
+		   	let mut input = input;
+		   	let mut ans = Vec::with_capacity(seq.len());
+		   	for p in seq{
+		   		let (new_input,v) = p.parse(input)?;
+		   		input = new_input;
+		   		ans.extend(v);
+		   	}
+
+		   	Ok((input,ans))
+		   },
+		   Pattern::OneOf(seq) => {
+		   	let mut error = syn::Error::new(input.span(),format!("errored on {} things:",seq.len()));
+		   	for p in seq{
+		   		match p.parse(input){
+		   			Ok(x) => {return Ok(x)},
+		   			Err(e) =>{error.combine(e)}
+		   		}
+		   	}
+
+		   	Err(error)
+		   },
+		   Pattern::Many0(parser) => {
+		   	let mut input = input;
+		   	let mut ans = Vec::with_capacity(3);
+		   	while let Ok((new_input,v)) = parser.parse(input){
+		   		input=new_input;
+		   		ans.extend(v);
+		   	}
+		   	Ok((input,ans))
+
+		   },
+		   Pattern::Many1(parser) => {
+		   	let (mut input,mut ans) = parser.parse(input)?;
+		   	while let Ok((new_input,v)) = parser.parse(input){
+		   		input=new_input;
+		   		ans.extend(v);
+		   	}
+		   	Ok((input,ans))
+
+		   },
+		}
+	}
+	
+}
+
+#[test]
+fn test_pattern_matches() {
+    use Pattern::*;
+    
+    // Test: Exact match
+    {
+        let pattern = Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+            "a b c".parse::<TokenStream>().unwrap()
+        )));
+        let input = syn::buffer::TokenBuffer::new2("a b c".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+    }
+
+    // Test: Any match
+    {
+        let pattern = Any;
+        let input = syn::buffer::TokenBuffer::new2("any_token".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+    }
+
+    // Test: Maybe match
+    {
+        let pattern = Maybe(Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+            "optional".parse::<TokenStream>().unwrap()
+        )))));
+
+        let input = syn::buffer::TokenBuffer::new2("optional something_else".parse::<TokenStream>().unwrap());
+        let cursor = input.begin();
+        let (cursor,_) = pattern.parse(cursor).unwrap();
+        pattern.parse(cursor).unwrap();
+    }
+
+    // Test: Literal match
+    {
+        let pattern = Literal;
+
+        let input = syn::buffer::TokenBuffer::new2("42".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+
+        let input = syn::buffer::TokenBuffer::new2("not_literal".parse::<TokenStream>().unwrap());
+        assert!(pattern.parse(input.begin()).is_err());
+    }
+
+    // Test: Word match
+    {
+        let pattern = Word;
+
+        let input = syn::buffer::TokenBuffer::new2("identifier".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+
+        let input = syn::buffer::TokenBuffer::new2("123".parse::<TokenStream>().unwrap());
+        assert!(pattern.parse(input.begin()).is_err());
+    }
+
+    // Test: Punctuation match
+    {
+        let pattern = Punc;
+
+        let buffer = syn::buffer::TokenBuffer::new2("+@".parse::<TokenStream>().unwrap());
+        let(cursor,_)=pattern.parse(buffer.begin()).unwrap();
+        pattern.parse(cursor).unwrap();
+    }
+
+    // Test: Sequence pattern
+    {
+        let pattern = Sequnce(Box::new([
+            Rc::new(Word),
+            Rc::new(Punc),
+            Rc::new(Literal),
+        ]));
+
+        let input = syn::buffer::TokenBuffer::new2("var = 42".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+    }
+
+    // Test: OneOf pattern
+    {
+        let pattern = OneOf(Box::new([
+            Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+                "a".parse::<TokenStream>().unwrap()
+            )))),
+            Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+                "b".parse::<TokenStream>().unwrap()
+            )))),
+        ]));
+
+        let input = syn::buffer::TokenBuffer::new2("a".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+
+        let input = syn::buffer::TokenBuffer::new2("b".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+
+        let input = syn::buffer::TokenBuffer::new2("c".parse::<TokenStream>().unwrap());
+        assert!(pattern.parse(input.begin()).is_err());
+    }
+
+    // Test: Many0 pattern
+    {
+        let pattern = Many0(Rc::new(Literal));
+
+        let input = syn::buffer::TokenBuffer::new2("1 2 3".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+    }
+
+    // Test: Many1 pattern
+    {
+        let pattern = Many1(Rc::new(Literal));
+
+        let input = syn::buffer::TokenBuffer::new2("1 2 3".parse::<TokenStream>().unwrap());
+        pattern.parse(input.begin()).unwrap();
+
+        let input = syn::buffer::TokenBuffer::new2("".parse::<TokenStream>().unwrap());
+        assert!(pattern.parse(input.begin()).is_err());
+    }
+
+    // Test: Complex hierarchy (3 levels deep and 2 branches wide)
+    {
+        let pattern = Sequnce(Box::new([
+            Rc::new(Delimited(
+                Rc::new(Sequnce(Box::new([
+                    Rc::new(Word),
+                    Rc::new(Punc),
+                    Rc::new(Literal),
+                ]))),
+                Delimiter::Parenthesis
+            )),
+            Rc::new(OneOf(Box::new([
+                Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+                    "branch1".parse::<TokenStream>().unwrap()
+                )))),
+                Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+                    "branch2".parse::<TokenStream>().unwrap()
+                )))),
+            ]))),
+        ]));
+
+        let input = syn::buffer::TokenBuffer::new2(
+            "(var_word, 42) branch1".parse::<TokenStream>().unwrap()
+        );
+        pattern.parse(input.begin()).unwrap();
+    }
+}
+
 
 #[derive(Clone,Copy,Debug)]
 pub enum SpotType{
@@ -501,7 +409,7 @@ fn parse_exact_match<'a,'b>(actual: Cursor<'a>,expected:Cursor<'b>,del:Delimiter
 pub struct ExactTokens(pub TokenBuffer);
 impl<'a> Combinator<'a,Vec<TokenTree>> for ExactTokens {
 
-	fn parse(&mut self, actual: syn::buffer::Cursor<'a>) 
+	fn parse(&self, actual: syn::buffer::Cursor<'a>) 
 	-> Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(10);
@@ -514,13 +422,28 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for ExactTokens {
 pub struct ExactTokensIgnore(pub TokenBuffer);
 impl<'a> Combinator<'a,()> for ExactTokensIgnore {
 
-	fn parse(&mut self, actual: syn::buffer::Cursor<'a>) 
+	fn parse(&self, actual: syn::buffer::Cursor<'a>) 
 	-> Result<(syn::buffer::Cursor<'a>, ()), syn::Error> 
 	{ 	
 		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,None)?;
 		Ok((cursor,()))
 	}
 }
+
+impl fmt::Debug for ExactTokens {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut tokens = Vec::new();
+        let mut cursor = self.0.begin();
+        while let Some((token, next)) = cursor.token_tree() {
+            tokens.push(format!("{:?}", token));
+            cursor = next;
+        }
+        f.debug_struct("ExactTokens")
+            .field("tokens", &tokens)
+            .finish()
+    }
+}
+
 
 #[test]
 fn test_exact_tokens_combinator() {
@@ -535,7 +458,7 @@ fn test_exact_tokens_combinator() {
                 let actual_stream: TokenStream = $actual.parse().unwrap();
 
                 let token_buffer = syn::buffer::TokenBuffer::new2(expected_stream);
-                let mut combinator = ExactTokens(token_buffer);
+                let combinator = ExactTokens(token_buffer);
 
                 let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
 
@@ -557,7 +480,7 @@ fn test_exact_tokens_combinator() {
                 let actual_stream: TokenStream = $actual.parse().unwrap();
 
                 let token_buffer = syn::buffer::TokenBuffer::new2(expected_stream);
-                let mut combinator = ExactTokens(token_buffer);
+                let combinator = ExactTokens(token_buffer);
 
                 let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
                 if combinator.parse(actual_buff.begin()).is_ok() {

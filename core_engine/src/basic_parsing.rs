@@ -1,6 +1,8 @@
 
 use crate::syn::buffer::Cursor;
 use proc_macro2::{TokenStream};
+use proc_macro2::{TokenTree,Delimiter, Group, Ident, Literal, Punct};
+
 
 #[cfg(test)]
 use syn::parse_str;
@@ -8,11 +10,31 @@ use syn::parse_str;
 use crate::syn::buffer::TokenBuffer;
 
 
+
 pub trait Combinator<'a, T, E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+    fn parse(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+}
+
+pub trait MutCombinator<'a, T, E = syn::Error>
+where
+    E: std::error::Error,
+{
+    fn parse_mut(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+}
+
+// Automatically implement MutCombinator for all Combinators
+impl<'a, T, E, C> MutCombinator<'a, T, E> for C
+where
+    C: Combinator<'a, T, E>,
+    E: std::error::Error,
+{
+    fn parse_mut(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E> {
+        // Delegate to the immutable version of parse
+        Combinator::parse(self, input)
+    }
 }
 
 pub trait BasicCombinator<'a, E = syn::Error>
@@ -112,7 +134,6 @@ fn match_terminals() {
     assert!(result.is_err(), "Expected parsing error for invalid input");
 }
 
-use proc_macro2::{Delimiter, TokenTree, Group, Ident, Literal, Punct};
 
 #[derive(Debug)]
 pub struct LiteralCombinator(pub Literal);
@@ -121,7 +142,7 @@ impl<'a> BasicCombinator<'a> for LiteralCombinator {
     fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Literal(lit), next)) => Ok((next, LiteralCombinator(lit))),
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal")),
+            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal (number or string)")),
             None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a literal")),
         }
     }
@@ -147,30 +168,38 @@ impl<'a> BasicCombinator<'a> for PuncCombinator {
     fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Punct(punct), next)) => Ok((next, PuncCombinator(punct))),
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected punctuation")),
+            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of +!#?.'& etc")),
             None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting punctuation")),
         }
     }
 }
 
 #[derive(Debug)]
-pub struct ParenCombinator(pub Group);
+pub struct GroupCombinator(pub Group);
 
-impl<'a> BasicCombinator<'a> for ParenCombinator {
+impl<'a> BasicCombinator<'a> for GroupCombinator {
     fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Group(group), next)) => {
-                if group.delimiter() == Delimiter::Parenthesis {
-                    Ok((next, ParenCombinator(group)))
-                } else {
-                    Err(syn::Error::new(
-                        group.span(),
-                        format!("Expected parentheses, found {:?}.", group.delimiter()),
-                    ))
-                }
+                Ok((next, GroupCombinator(group)))
             }
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a group with parentheses")),
+            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of [...] (...) {...}")),
             None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a group")),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct AnyCombinator(pub TokenTree);
+
+impl<'a> BasicCombinator<'a> for AnyCombinator {
+    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+        match input.token_tree() {
+            Some((tree, next)) => {
+                Ok((next, AnyCombinator(tree)))
+            }
+
+            None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF")),
         }
     }
 }
@@ -212,8 +241,8 @@ fn test_basic_combinators() {
     }
 
     // Test ParenCombinator (success)
-    match ParenCombinator::parse(cursor) {
-        Ok((next, ParenCombinator(group))) => {
+    match GroupCombinator::parse(cursor) {
+        Ok((next, GroupCombinator(group))) => {
             assert_eq!(group.delimiter(), Delimiter::Parenthesis);
             assert_eq!(group.stream().to_string(), "inner");
             cursor = next;
@@ -228,10 +257,65 @@ fn test_basic_combinators() {
     }
 
     // Move the cursor forward to ensure trailing data works
-    match WordCombinator::parse(cursor) {
-        Ok((_, WordCombinator(ident))) => {
+    match AnyCombinator::parse(cursor) {
+        Ok((_, AnyCombinator(ident))) => {
             assert_eq!(ident.to_string(), "invalid");
         }
         Err(err) => panic!("WordCombinator failed on trailing data: {}", err),
+    }
+}
+
+#[derive(Debug,Clone,Copy)]
+pub struct DelParser (pub Delimiter);
+
+impl<'a> Combinator<'a, TokenStream> for DelParser {
+    fn parse(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
+        match input.group(self.0) {
+            Some((group, _, next)) => {
+                Ok((next, group.token_stream()))
+            }
+            None => {
+                let delimiter_name = match self.0 {
+                    Delimiter::Parenthesis => "(",
+                    Delimiter::Bracket => "[",
+                    Delimiter::Brace => "{",
+                    Delimiter::None => "<empty delim (likely bug)>",
+                };
+                Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
+            }
+        }
+    }
+}
+
+#[test]
+fn test_delimited_sequence_combinator() {
+    use syn::buffer::TokenBuffer;
+    use proc_macro2::TokenStream;
+
+    let tokens: TokenStream = "[1, 2, 3]".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let cursor = buffer.begin();
+
+    let combinator = DelParser(Delimiter::Bracket);
+
+    // Test parsing a delimited sequence
+    match combinator.parse(cursor) {
+        Ok((next, token_stream)) => {
+            assert_eq!(token_stream.to_string(), "1 , 2 , 3");
+            assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
+        }
+        Err(err) => panic!("DelimitedSequence failed: {}", err),
+    }
+
+    // Test parsing with wrong delimiter
+    let tokens: TokenStream = "(1, 2, 3)".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let cursor = buffer.begin();
+
+    match combinator.parse(cursor) {
+        Ok(_) => panic!("Expected DelimitedSequence to fail, but it succeeded"),
+        Err(err) => {
+            assert!(err.to_string().contains("Expected delimited group starting with '['"));
+        }
     }
 }
