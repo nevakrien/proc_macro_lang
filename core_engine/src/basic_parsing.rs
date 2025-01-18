@@ -1,38 +1,55 @@
+
+use crate::syn::buffer::Cursor;
 use proc_macro2::{TokenStream};
-use syn::parse::{Parse, ParseBuffer};
 
 #[cfg(test)]
 use syn::parse_str;
+#[cfg(test)]
+use crate::syn::buffer::TokenBuffer;
 
-#[derive(Debug,Clone)]
+
+pub trait Combinator<'a, T, E = syn::Error>
+where
+    E: std::error::Error,
+{
+    fn parse(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+}
+
+pub trait BasicCombinator<'a, E = syn::Error>
+where
+    E: std::error::Error,
+{
+    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), E>
+    where
+        Self: Sized;
+}
+
+#[derive(Debug, Clone)]
 pub struct TokenLiteral(pub TokenStream);
 
-impl Parse for TokenLiteral {
-    fn parse(input: &ParseBuffer<'_>) -> syn::Result<Self> {
-        if !input.peek(syn::token::Bracket){
-        	return Err(input.error("expected [tokens]"));
+impl<'a> BasicCombinator<'a,  syn::Error> for TokenLiteral {
+    #[inline]
+    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TokenLiteral), syn::Error> {
+        if let Some((ans,_, next)) = input.group(proc_macro2::Delimiter::Bracket) {
+            Ok((next, TokenLiteral(ans.token_stream())))
+        } else {
+            Err(syn::Error::new(input.span(), "Expected [tokens]"))
         }
-        let content;
-        let _brackets = syn::bracketed!(content in input);
-
-        // Capture the tokens inside the brackets as a TokenStream
-        Ok(TokenLiteral(content.parse()?))
- 
     }
 }
 
 impl Into<TokenStream> for TokenLiteral {
-
-	fn into(self) -> proc_macro2::TokenStream { self.0 }
+    fn into(self) -> proc_macro2::TokenStream {
+        self.0
+    }
 }
 
 #[test]
 fn literal_tokens_parse() {
-    parse_str::<TokenLiteral>("[let x [=] 42;]").unwrap();
-    // let x = parse_str::<TokenLiteral>("[let x [=] 42;]").unwrap();
-    // println!("parsed {}",x.0.to_string());
-    parse_str::<TokenLiteral>("let x = 42;").unwrap_err();
-    parse_str::<TokenLiteral>("(let x = 42; [])").unwrap_err();
+	let tokens = TokenBuffer::new2("[let x [=] 42;]".parse().unwrap());
+    let cursor = tokens.begin();
+
+    TokenLiteral::parse(cursor).expect("Failed to parse");
 }
 
 pub enum TerminalPatern {
@@ -41,102 +58,56 @@ pub enum TerminalPatern {
 
     Literal,
     Word,
-    Punc(char),
+    Punc,
     EOF,
 
 }
 
-impl Parse for TerminalPatern {
-
-	fn parse(input: &ParseBuffer<'_>) -> Result<Self, syn::Error> {
-    	//first try for exact
-    	if let Ok(s) = TokenLiteral::parse(input){
-			return Ok(TerminalPatern::Exact(s.into()))
-		}
-
-		//now the keywords
-    	syn::custom_keyword!(word);
-    	syn::custom_keyword!(literal);
-    	syn::custom_keyword!(eof);
-    	syn::custom_keyword!(any);
+impl<'a> BasicCombinator<'a,  syn::Error> for TerminalPatern {
+	fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error>{
+		static  ERROR_MESSAGE: &str = "expected one of [tokens] 'any' 'literal' 'word' 'punc' 'eof'";
 		
-		if let Ok(_) = input.parse::<word>() {
-			return Ok(TerminalPatern::Word); 
+		if let Ok((input,ans)) = TokenLiteral::parse(input) {
+			return Ok((input,TerminalPatern::Exact(ans.into())));
 		}
-
-		if let Ok(_) = input.parse::<any>() {
-			return Ok(TerminalPatern::Any); 
+		match input.ident() {
+			None => Err(syn::Error::new(input.span(),ERROR_MESSAGE)),
+			Some((word,new_input)) => {
+				match word.to_string().as_str() {
+					"any" => Ok((new_input,TerminalPatern::Any)),
+					"word" => Ok((new_input,TerminalPatern::Word)),
+					"literal" => Ok((new_input,TerminalPatern::Literal)),
+					"punc" => Ok((new_input,TerminalPatern::Punc)),
+					"eof" => Ok((new_input,TerminalPatern::EOF)),
+					_ => Err(syn::Error::new(input.span(),ERROR_MESSAGE)),
+				}
+			},
 		}
-
-		if let Ok(_) = input.parse::<literal>() {
-			return Ok(TerminalPatern::Literal); 
-		}
-
-		if let Ok(_) = input.parse::<eof>() {
-			return Ok(TerminalPatern::EOF); 
-		}
-
-		//now punctioation
-		let res = input.step(|cursor| {
-			match cursor.punct() {
-				Some(p) => Ok(p),
-				None => Err(cursor.error("expected *&!@$.."))
-			}
-		});
-
-		if let Ok(p) = res {
-			return Ok(TerminalPatern::Punc(p.as_char()))
-		}
-        
-
-		Err(input.error("expected one of: [tokens], 'word', 'any',*&!@$..  literal or EOF"))
 	}
 }
 
 #[test]
-fn test_terminal_pattern_exact() {
-    let input = "[5 aadsw]";
-    let parsed: TerminalPatern = parse_str(input).expect("Failed to parse exact token");
+fn match_terminals() {
+    let binding = TokenBuffer::new2(parse_str("[5 aadsw]").unwrap());
+    let input = binding.begin();
+    let parsed = TerminalPatern::parse(input).expect("Failed to parse exact token");
     match parsed {
-        TerminalPatern::Exact(_) => (),
+        (_,TerminalPatern::Exact(_)) => (),
         _ => panic!("Expected TerminalPatern::Exact"),
     }
-}
 
-#[test]
-fn test_terminal_pattern_word() {
-    let input = "word";
-    let parsed: TerminalPatern = parse_str(input).expect("Failed to parse 'word'");
+    let binding = TokenBuffer::new2(parse_str("word").unwrap());
+    let input = binding.begin();
+    let (_,parsed)= TerminalPatern::parse(input).expect("Failed to parse 'word'");
     assert!(matches!(parsed, TerminalPatern::Word));
-}
 
-#[test]
-fn test_terminal_pattern_eof() {
-    let input = "eof";
-    let parsed: TerminalPatern = parse_str(input).expect("Failed to parse 'eof'");
+    let binding = TokenBuffer::new2(parse_str("eof").unwrap());
+    let input = binding.begin();
+    let (_,parsed) = TerminalPatern::parse(input).expect("Failed to parse 'eof'");
     assert!(matches!(parsed, TerminalPatern::EOF));
-}
 
-#[test]
-fn test_terminal_pattern_any() {
-    let input = "any";
-    let parsed: TerminalPatern = parse_str(input).expect("Failed to parse 'any'");
-    assert!(matches!(parsed, TerminalPatern::Any));
-}
-
-#[test]
-fn test_terminal_pattern_punctuation() {
-    let input = "!";
-    let parsed: TerminalPatern = parse_str(input).expect("Failed to parse punctuation");
-    match parsed {
-        TerminalPatern::Punc('!') => (),
-        _ => panic!("Expected TerminalPatern::Punc('!')"),
-    }
-}
-
-#[test]
-fn test_terminal_pattern_invalid_input() {
-    let input = "invalid";
-    let result: Result<TerminalPatern, syn::Error> = parse_str(input);
+    let binding = TokenBuffer::new2(parse_str("123invalid").unwrap());
+    let input = binding.begin();
+    let result = TerminalPatern::parse(input);
     assert!(result.is_err(), "Expected parsing error for invalid input");
 }
