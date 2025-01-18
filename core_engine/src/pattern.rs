@@ -50,10 +50,10 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 		   	let (inner_c,v) = parser.parse(buff.begin())?;
 		   	if !inner_c.eof(){
 		   		let s = match del {
-		   			Delimiter::None =>"<EOF>",
+		   			Delimiter::None =>"<EOF (empty delim)>",
 	        			Delimiter::Parenthesis=> ")",
 	        			Delimiter::Bracket=> "]",
-	        			Delimiter::Brace => "}}",
+	        			Delimiter::Brace => "}",
 		   		};
 		   		return Err(syn::Error::new(
 		   			inner_c.span(),format!("expected {} found: {}",
@@ -73,7 +73,17 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 			Pattern::Any => AnyCombinator::parse(input).map(|(c,x)| {(c,vec![x.0])}),
 		   
 		   Pattern::Ignore(parser) => parser.parse(input).map(|(c,_)| {(c,vec![])}),
-		   Pattern::Not(_) => todo!(),
+		   Pattern::Not(parser) => match parser.parse(input){
+		   	Err(_) => Ok(input.token_tree()
+		   		.map(|(tree,c)| (c,vec![tree]))
+		   		.unwrap_or_else(||(input,vec![]))
+		   	),
+		   	Ok((_,wrong)) => {
+		   		Err(
+		   			syn::Error::new_spanned(wrong.into_iter().collect::<TokenStream>(),"found unexpected sequnce (Not)")
+		   		)
+		   	}
+		   },
 		   Pattern::Maybe(parser) => match parser.parse(input){
 		   	Ok(x) => Ok(x),
 		   	Err(_) => Ok((input,vec![]))
@@ -91,7 +101,7 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 		   	Ok((input,ans))
 		   },
 		   Pattern::OneOf(seq) => {
-		   	let mut error = syn::Error::new(input.span(),format!("errored on {} things:",seq.len()));
+		   	let mut error = syn::Error::new(input.span(),format!("errored on {} things (OneOf):",seq.len()));
 		   	for p in seq{
 		   		match p.parse(input){
 		   			Ok(x) => {return Ok(x)},
@@ -103,7 +113,7 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 		   },
 		   Pattern::Many0(parser) => {
 		   	let mut input = input;
-		   	let mut ans = Vec::with_capacity(3);
+		   	let mut ans = Vec::new();
 		   	while let Ok((new_input,v)) = parser.parse(input){
 		   		input=new_input;
 		   		ans.extend(v);
@@ -187,6 +197,45 @@ fn test_pattern_matches() {
         let(cursor,_)=pattern.parse(buffer.begin()).unwrap();
         pattern.parse(cursor).unwrap();
     }
+
+        // Test: Ignore pattern
+    {
+        let pattern = Ignore(Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+            "ignore_this".parse::<TokenStream>().unwrap()
+        )))));
+
+        let input = syn::buffer::TokenBuffer::new2("ignore_this keep_this".parse::<TokenStream>().unwrap());
+        let (cursor, result) = pattern.parse(input.begin()).unwrap();
+
+        // Ensure the ignored tokens are not in the result
+        assert!(result.is_empty());
+
+        // The remaining cursor should still contain "keep_this"
+        assert_eq!(
+            cursor.token_tree().unwrap().0.to_string(),
+            "keep_this"
+        );
+    }
+
+    // Test: Not pattern
+    {
+        let pattern = Not(Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+            "not_this".parse::<TokenStream>().unwrap()
+        )))));
+
+        // Input that does NOT match "not_this"
+        let input = syn::buffer::TokenBuffer::new2("valid_token".parse::<TokenStream>().unwrap());
+        let (_cursor, result) = pattern.parse(input.begin()).unwrap();
+
+        // Ensure the token is parsed as it doesn't match "not_this"
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].to_string(), "valid_token");
+
+        // Input that matches "not_this"
+        let input = syn::buffer::TokenBuffer::new2("not_this".parse::<TokenStream>().unwrap());
+        assert!(pattern.parse(input.begin()).is_err());
+    }
+    
 
     // Test: Sequence pattern
     {
