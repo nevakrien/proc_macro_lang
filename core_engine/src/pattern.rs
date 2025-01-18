@@ -11,11 +11,12 @@ use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::rc::Rc;
 // use syn::parse::Parse;
 
+///Used to represent a parser that returns `CapturedPattern`
+///
 #[derive(Debug)]
 pub enum Pattern {
 	Exact(ExactTokens),
 	Delimited(Rc<Pattern>, Delimiter),
-
 
 	//rusts core tokens
 	Literal,
@@ -31,19 +32,83 @@ pub enum Pattern {
 	Maybe(Rc<Pattern>),
 
 	//composite
-	Sequnce(Box<[Rc<Pattern>]>),
-	OneOf(Box<[Rc<Pattern>]>),
+	Sequence(Rc<[Rc<Pattern>]>),
+	OneOf(Rc<[Rc<Pattern>]>),
 
 	//unbounded
 	Many0(Rc<Pattern>),
 	Many1(Rc<Pattern>),
 }
 
-impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 
-	fn parse(&self, input: syn::buffer::Cursor<'a>) -> syn::Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>)> { 
+///Used as the output of a Pattern.parse().
+///None is only returned on ignore
+#[derive(Debug,Clone)]
+pub enum CapturedPattern{
+	Terminal(RcTokenBuffer),
+	OneOf(Rc<CapturedPattern>,u32),//the num is which 1 was chosen
+	Sequence(Rc<[Rc<CapturedPattern>]>),//used by Maybe Many and everything else 
+	None,//only used by Ignore
+}
+
+impl CapturedPattern{
+	pub fn is_none(&self)-> bool{
 		match self {
-			Pattern::Exact(parser) => parser.parse(input),
+			CapturedPattern::None => true,
+			_ => false
+		}
+	}
+	pub fn is_empty(&self) -> bool {
+		use CapturedPattern::*;
+		match self {
+			Terminal(_)|OneOf(_, _)=> false,
+			Sequence(v)=>v.is_empty(),
+			None => true
+		}
+	}
+}
+
+impl From<Vec<TokenTree>> for CapturedPattern {
+    fn from(vec: Vec<TokenTree>) -> Self {
+        let token_stream: TokenStream = TokenStream::from_iter(vec);
+        let token_buffer = TokenBuffer::new2(token_stream);
+        CapturedPattern::Terminal(RcTokenBuffer::from(token_buffer))
+    }
+}
+
+// impl From<Vec<Rc<CapturedPattern>>> for CapturedPattern {
+//     fn from(vec: Vec<Rc<CapturedPattern>>) -> Self {
+//         CapturedPattern::Sequence(vec.iter().filter(|x| x.is_none()).map(|x| x.clone()).collect::<Rc<_>>())
+//     }
+// }
+
+impl Into<TokenStream> for CapturedPattern {
+    fn into(self) -> TokenStream {
+        match self {
+            CapturedPattern::Terminal(buffer) => {
+                let mut token_stream = TokenStream::new();
+                let mut cursor = buffer.0.begin();
+                while let Some((token, next)) = cursor.token_tree() {
+                    token_stream.extend::<[TokenTree; 1]>([token.into()]);
+                    cursor = next;
+                }
+                token_stream
+            }
+            CapturedPattern::OneOf(pattern, _) => (*pattern).clone().into(),
+            CapturedPattern::Sequence(patterns) => {
+                patterns.iter().map(|p| { let s : TokenStream =(**p).clone().into(); s}).collect()
+            }
+            CapturedPattern::None => TokenStream::new(),
+        }
+    }
+}
+
+impl<'a> Combinator<'a,CapturedPattern> for Pattern {
+
+	fn parse(&self, input: syn::buffer::Cursor<'a>) -> syn::Result<(syn::buffer::Cursor<'a>, CapturedPattern)> { 
+		match self {
+			Pattern::Exact(parser) => parser.parse(input).map(|(c,x)| (c,x.into())),
+		   
 		   Pattern::Delimited(parser, del) => {
 		   	let (rest,tree)=DelParser(*del).parse(input)?;
 		   	let buff = TokenBuffer::new2(tree);
@@ -65,44 +130,46 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 		   	Ok((rest,v))
 		   },
 
+			Pattern::Literal => LiteralCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Literal(x.0)].into())}),
+			Pattern::Word => WordCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Ident(x.0)].into())}),
+			Pattern::Punc => PuncCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Punct(x.0)].into())}),
+			Pattern::Group => GroupCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Group(x.0)].into())}),
+			Pattern::Any => AnyCombinator::parse(input).map(|(c,x)| {(c,vec![x.0].into())}),
 
-			Pattern::Literal => LiteralCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Literal(x.0)])}),
-			Pattern::Word => WordCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Ident(x.0)])}),
-			Pattern::Punc => PuncCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Punct(x.0)])}),
-			Pattern::Group => GroupCombinator::parse(input).map(|(c,x)| {(c,vec![TokenTree::Group(x.0)])}),
-			Pattern::Any => AnyCombinator::parse(input).map(|(c,x)| {(c,vec![x.0])}),
 		   
-		   Pattern::Ignore(parser) => parser.parse(input).map(|(c,_)| {(c,vec![])}),
+		   Pattern::Ignore(parser) => parser.parse(input).map(|(c,_)| {(c,CapturedPattern::None)}),
+
 		   Pattern::Not(parser) => match parser.parse(input){
 		   	Err(_) => Ok(input.token_tree()
-		   		.map(|(tree,c)| (c,vec![tree]))
-		   		.unwrap_or_else(||(input,vec![]))
+		   		.map(|(tree,c)| (c,vec![tree].into()))
+		   		.unwrap_or_else(||(input,CapturedPattern::Terminal(RcTokenBuffer::default())))
 		   	),
 		   	Ok((_,wrong)) => {
 		   		Err(
-		   			syn::Error::new_spanned(wrong.into_iter().collect::<TokenStream>(),"found unexpected sequnce (Not)")
+		   			syn::Error::new_spanned(Into::<TokenStream>::into(wrong),"found unexpected Sequence (Not)")
 		   		)
 		   	}
 		   },
 		   Pattern::Maybe(parser) => match parser.parse(input){
 		   	Ok(x) => Ok(x),
-		   	Err(_) => Ok((input,vec![]))
+		   	Err(_) => Ok((input,CapturedPattern::Sequence(Rc::new([]))))
 		   },
 
-		   Pattern::Sequnce(seq) => {
+		   Pattern::Sequence(seq) => {
 		   	let mut input = input;
 		   	let mut ans = Vec::with_capacity(seq.len());
-		   	for p in seq{
+		   	for p in seq.iter(){
 		   		let (new_input,v) = p.parse(input)?;
 		   		input = new_input;
-		   		ans.extend(v);
+		   		ans.push(Rc::new(v));
 		   	}
 
-		   	Ok((input,ans))
+		   	Ok((input,CapturedPattern::Sequence(ans.into())))
 		   },
+
 		   Pattern::OneOf(seq) => {
 		   	let mut error = syn::Error::new(input.span(),format!("errored on {} things (OneOf):",seq.len()));
-		   	for p in seq{
+		   	for p in seq.iter(){
 		   		match p.parse(input){
 		   			Ok(x) => {return Ok(x)},
 		   			Err(e) =>{error.combine(e)}
@@ -116,23 +183,60 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for Pattern {
 		   	let mut ans = Vec::new();
 		   	while let Ok((new_input,v)) = parser.parse(input){
 		   		input=new_input;
-		   		ans.extend(v);
+		   		ans.push(Rc::new(v));
 		   	}
-		   	Ok((input,ans))
+		   	Ok((input,CapturedPattern::Sequence(ans.into())))
 
 		   },
 		   Pattern::Many1(parser) => {
-		   	let (mut input,mut ans) = parser.parse(input)?;
+		   	let mut ans = Vec::with_capacity(1);
+		   	let (mut input,first) = parser.parse(input)?;
+		   	ans.push(Rc::new(first));
+
 		   	while let Ok((new_input,v)) = parser.parse(input){
 		   		input=new_input;
-		   		ans.extend(v);
+		   		ans.push(Rc::new(v));
 		   	}
-		   	Ok((input,ans))
-
+		   	Ok((input,CapturedPattern::Sequence(ans.into())))
 		   },
 		}
 	}
 	
+}
+
+/// Parses the paremeters for a  pattern using syntax thats similar to regex
+/// Example:
+/// ```ignore
+/// ('word & +#('literal | 'punc)) ?'any;
+/// ```
+///
+/// ### Syntax
+/// - Terminals:
+///   - `'any`: Matches any token.
+///   - `'literal`: Matches literal tokens.
+///   - `'word`: Matches identifiers or "word-like" tokens.
+///   - `'punc`: Matches punctuation tokens.
+///   - `'group`: Matches any parenthesized expression.
+///
+/// - Delimited Patterns:
+///   - `#(expr)`: Matches a pattern enclosed in parentheses.
+///   - `#[expr]`: Matches a pattern enclosed in brackets.
+///   - `#{expr}`: Matches a pattern enclosed in curly braces.
+///
+/// - Modifiers (prefix):
+///   - `+`: Matches one or more occurrences of a pattern.
+///   - `*`: Matches zero or more occurrences of a pattern.
+///   - `?`: Matches an optional pattern.
+///   - `-`: Ignores the matched tokens but still parses them.
+///
+/// - Composite Patterns:
+///   - `|`: Matches one of several alternatives, e.g., `'word | 'literal`.
+///   - `&`: Matches a sequence of patterns in order, e.g., `'word & 'literal`.
+///
+/// - Grouping and Evaluation Order:
+///   - Parentheses `()` group patterns and define precedence, e.g., `('word & ?'literal) | 'punc`.
+impl BasicCombinator<'_> for Pattern{
+	fn parse(_: syn::buffer::Cursor<'_>) -> Result<(syn::buffer::Cursor<'_>, Self), syn::Error> { todo!() }
 }
 
 #[test]
@@ -218,28 +322,33 @@ fn test_pattern_matches() {
     }
 
     // Test: Not pattern
-    {
-        let pattern = Not(Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
-            "not_this".parse::<TokenStream>().unwrap()
-        )))));
+	{
+	    let pattern = Not(Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
+	        "not_this".parse::<TokenStream>().unwrap()
+	    )))));
 
-        // Input that does NOT match "not_this"
-        let input = syn::buffer::TokenBuffer::new2("valid_token".parse::<TokenStream>().unwrap());
-        let (_cursor, result) = pattern.parse(input.begin()).unwrap();
+	    // Input that does NOT match "not_this"
+	    let input = syn::buffer::TokenBuffer::new2("valid_token".parse::<TokenStream>().unwrap());
+	    let (_cursor, result) = pattern.parse(input.begin()).unwrap();
 
-        // Ensure the token is parsed as it doesn't match "not_this"
-        assert_eq!(result.len(), 1);
-        assert_eq!(result[0].to_string(), "valid_token");
+	    // Ensure the token is parsed as it doesn't match "not_this"
+	    match result {
+	        CapturedPattern::Terminal(buffer) => {
+	        		let (x,_) = buffer.0.begin().ident().unwrap();
+	            assert_eq!(x.to_string(), "valid_token");
+	        },
+	        _ => panic!("Expected CapturedPattern::Terminal"),
+	    }
 
-        // Input that matches "not_this"
-        let input = syn::buffer::TokenBuffer::new2("not_this".parse::<TokenStream>().unwrap());
-        assert!(pattern.parse(input.begin()).is_err());
-    }
-    
+	    // Input that matches "not_this"
+	    let input = syn::buffer::TokenBuffer::new2("not_this".parse::<TokenStream>().unwrap());
+	    assert!(pattern.parse(input.begin()).is_err());
+	}
+
 
     // Test: Sequence pattern
     {
-        let pattern = Sequnce(Box::new([
+        let pattern = Sequence(Rc::new([
             Rc::new(Word),
             Rc::new(Punc),
             Rc::new(Literal),
@@ -251,7 +360,7 @@ fn test_pattern_matches() {
 
     // Test: OneOf pattern
     {
-        let pattern = OneOf(Box::new([
+        let pattern = OneOf(Rc::new([
             Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
                 "a".parse::<TokenStream>().unwrap()
             )))),
@@ -291,16 +400,16 @@ fn test_pattern_matches() {
 
     // Test: Complex hierarchy (3 levels deep and 2 branches wide)
     {
-        let pattern = Sequnce(Box::new([
+        let pattern = Sequence(Rc::new([
             Rc::new(Delimited(
-                Rc::new(Sequnce(Box::new([
+                Rc::new(Sequence(Rc::new([
                     Rc::new(Word),
                     Rc::new(Punc),
                     Rc::new(Literal),
                 ]))),
                 Delimiter::Parenthesis
             )),
-            Rc::new(OneOf(Box::new([
+            Rc::new(OneOf(Rc::new([
                 Rc::new(Exact(ExactTokens(syn::buffer::TokenBuffer::new2(
                     "branch1".parse::<TokenStream>().unwrap()
                 )))),
@@ -609,4 +718,39 @@ fn test_exact_tokens_combinator() {
         "a b",
         "a b c;"
     );
+}
+
+#[derive(Clone)]
+pub struct RcTokenBuffer(pub Rc<TokenBuffer>);
+
+impl fmt::Debug for RcTokenBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut tokens = Vec::new();
+        let mut cursor = self.0.begin();
+        while let Some((token, next)) = cursor.token_tree() {
+            tokens.push(format!("{:?}", token));
+            cursor = next;
+        }
+        f.debug_struct("RcTokenBuffer")
+            .field("tokens", &tokens)
+            .finish()
+    }
+}
+
+impl From<std::vec::IntoIter<TokenTree>> for RcTokenBuffer {
+    fn from(iter: std::vec::IntoIter<TokenTree>) -> Self {
+        let token_buffer = TokenBuffer::new2(proc_macro2::TokenStream::from_iter(iter));
+        RcTokenBuffer(Rc::new(token_buffer))
+    }
+}
+
+impl From<TokenBuffer> for RcTokenBuffer {
+    fn from(buffer: TokenBuffer) -> Self {
+        RcTokenBuffer(Rc::new(buffer))
+    }
+}
+
+impl Default for RcTokenBuffer{
+
+	fn default() -> Self { RcTokenBuffer(Rc::new(TokenBuffer::new2(TokenStream::new()))) }
 }

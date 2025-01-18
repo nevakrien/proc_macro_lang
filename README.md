@@ -41,7 +41,7 @@ these would probably be wrappers around syns basic functionality with some added
 4. full integration with rust 
 
 # Limitations
-this projet has a very large scope and thus we cant cover everything. the languge would likely be fairly slow as we are going to be using an ast interpter and not a VM.
+this projet has a very large scope and thus we cant cover everything. the languge would likely be fairly slow as we are going to be using an ast interpter and not a VM. Further more everything uses Rc everywhere which is probably fairly expensive for no reason.
 
 we would also not cover parsing rules that break rust or non rust FFI.
 

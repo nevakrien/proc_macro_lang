@@ -81,32 +81,36 @@ pub enum TerminalPatern {
     Literal,
     Word,
     Punc,
-    EOF,
+    Group
 
 }
 
-impl<'a> BasicCombinator<'a,  syn::Error> for TerminalPatern {
-	fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error>{
-		static  ERROR_MESSAGE: &str = "expected one of [tokens] 'any' 'literal' 'word' 'punc' 'eof'";
-		
-		if let Ok((input,ans)) = TokenLiteral::parse(input) {
-			return Ok((input,TerminalPatern::Exact(ans.into())));
-		}
-		match input.ident() {
-			None => Err(syn::Error::new(input.span(),ERROR_MESSAGE)),
-			Some((word,new_input)) => {
-				match word.to_string().as_str() {
-					"any" => Ok((new_input,TerminalPatern::Any)),
-					"word" => Ok((new_input,TerminalPatern::Word)),
-					"literal" => Ok((new_input,TerminalPatern::Literal)),
-					"punc" => Ok((new_input,TerminalPatern::Punc)),
-					"eof" => Ok((new_input,TerminalPatern::EOF)),
-					_ => Err(syn::Error::new(input.span(),ERROR_MESSAGE)),
-				}
-			},
-		}
-	}
+impl<'a> BasicCombinator<'a, syn::Error> for TerminalPatern {
+    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error> {
+        static ERROR_MESSAGE: &str = "expected one of [tokens] 'any 'group 'literal 'word 'punc";
+
+        // Attempt to parse exact tokens first
+        if let Ok((input, ans)) = TokenLiteral::parse(input) {
+            return Ok((input, TerminalPatern::Exact(ans.into())));
+        }
+
+        // Attempt to parse a lifetime (e.g., 'any, 'literal)
+        match input.lifetime() {
+            Some((lifetime, new_input)) => {
+                match lifetime.ident.to_string().as_str() {
+                    "any" => Ok((new_input, TerminalPatern::Any)),
+                    "word" => Ok((new_input, TerminalPatern::Word)),
+                    "literal" => Ok((new_input, TerminalPatern::Literal)),
+                    "punc" => Ok((new_input, TerminalPatern::Punc)),
+                    "group" => Ok((new_input, TerminalPatern::Group)),
+                    _ => Err(syn::Error::new(lifetime.span(), ERROR_MESSAGE)),
+                }
+            },
+            None => Err(syn::Error::new(input.span(), ERROR_MESSAGE)),
+        }
+    }
 }
+
 
 #[test]
 fn match_terminals() {
@@ -118,15 +122,11 @@ fn match_terminals() {
         _ => panic!("Expected TerminalPatern::Exact"),
     }
 
-    let binding = TokenBuffer::new2(parse_str("word").unwrap());
+    let binding = TokenBuffer::new2(parse_str("'word").unwrap());
     let input = binding.begin();
     let (_,parsed)= TerminalPatern::parse(input).expect("Failed to parse 'word'");
     assert!(matches!(parsed, TerminalPatern::Word));
 
-    let binding = TokenBuffer::new2(parse_str("eof").unwrap());
-    let input = binding.begin();
-    let (_,parsed) = TerminalPatern::parse(input).expect("Failed to parse 'eof'");
-    assert!(matches!(parsed, TerminalPatern::EOF));
 
     let binding = TokenBuffer::new2(parse_str("123invalid").unwrap());
     let input = binding.begin();
