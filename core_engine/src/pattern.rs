@@ -7,12 +7,15 @@ use std::rc::Rc;
 #[derive(Debug)]
 pub enum Pattern {
     Exact(TokenStream),
+    Delimited(Rc<Pattern>, Delimiter),
+    
 
     //rusts core tokens
     Literal,
     Word,
-    Punc(char),
-    Paren(Rc<Pattern>, Delimiter),
+    Punc,
+    Paren,
+
 
     //optionals
     Any,
@@ -355,117 +358,6 @@ pub enum Pattern {
 //     }
 // }
 
-// #[test]
-// fn test_parse_exact_match() {
-//     use proc_macro2::Delimiter;
-
-//     // Test 1: Simple token match
-//     {
-//         let expected: TokenStream = "a b c;".parse().unwrap();
-//         let mut actual_iter = "a b c;".parse::<TokenStream>().unwrap().into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 2: Extra spaces should not affect matching
-//     {
-//         let expected: TokenStream = "a b c;".parse().unwrap();
-//         let mut actual_iter = "a     b c ;".parse::<TokenStream>().unwrap().into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 3: Comments should not affect matching
-//     {
-//         let expected: TokenStream = "a b c;".parse().unwrap();
-//         let mut actual_iter = "a /* comment */ b // inline comment\n c ;"
-//             .parse::<TokenStream>()
-//             .unwrap()
-//             .into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 4: Mismatched tokens
-//     {
-//         let expected: TokenStream = "a b c;".parse().unwrap();
-//         let mut actual_iter = "a b d;".parse::<TokenStream>().unwrap().into_iter();
-//         let err = parse_exact_match(expected, &mut actual_iter).unwrap_err();
-//         match err {
-//             (TokenTree::Ident(left), TokenTree::Ident(right)) => {
-//                 assert_eq!(left, "c");
-//                 assert_eq!(right, "d");
-//             }
-//             _ => panic!("Expected a mismatch of identifiers, got {:?}", err),
-//         }
-//     }
-
-//     // Test 5: Nested groups with exact match
-//     {
-//         let expected: TokenStream = "a (b {c}) d;".parse().unwrap();
-//         let mut actual_iter = "a (b {c}) d;".parse::<TokenStream>().unwrap().into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 6: Nested groups with mismatched delimiters
-//     {
-//         let expected: TokenStream = "a (b {c}) d;".parse().unwrap();
-//         let mut actual_iter = "a [b {c}] d;".parse::<TokenStream>().unwrap().into_iter();
-//         let err = parse_exact_match(expected, &mut actual_iter).unwrap_err();
-//         match err {
-//             (TokenTree::Group(left), TokenTree::Group(right)) => {
-//                 assert_eq!(left.delimiter(), Delimiter::Parenthesis);
-//                 assert_eq!(right.delimiter(), Delimiter::Bracket);
-//             }
-//             _ => panic!("Expected a mismatch of group delimiters, got {:?}", err),
-//         }
-//     }
-
-//     // Test 7: Nested groups with mismatched inner content
-//     {
-//         let expected: TokenStream = "a (b {c}) d;".parse().unwrap();
-//         let mut actual_iter = "a (b {x}) d;".parse::<TokenStream>().unwrap().into_iter();
-//         let _err = parse_exact_match(expected, &mut actual_iter).unwrap_err();
-//     }
-
-//     // Test 8: Complex non-Rust syntax
-//     {
-//         let expected: TokenStream = "custom_function(arg1,arg2,arg3);".parse().unwrap();
-//         let mut actual_iter = "custom_function(arg1, arg2 /* comment */, arg3);"
-//             .parse::<TokenStream>()
-//             .unwrap()
-//             .into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 9: Different spacing and comments within nested groups
-//     {
-//         let expected: TokenStream = "outer(inner1{inner2[data]});".parse().unwrap();
-//         let mut actual_iter = "outer ( inner1 /* inline */ { inner2 // comment\n [ data ] } ) ;"
-//             .parse::<TokenStream>()
-//             .unwrap()
-//             .into_iter();
-//         assert!(parse_exact_match(expected, &mut actual_iter).is_ok());
-//     }
-
-//     // Test 10: Unexpected EOF in actual tokens
-//     {
-//         let expected: TokenStream = "a b c;".parse().unwrap();
-//         let mut actual_iter = "a b".parse::<TokenStream>().unwrap().into_iter();
-//         let err = parse_exact_match(expected, &mut actual_iter).unwrap_err();
-//         match err {
-//             (TokenTree::Ident(left), TokenTree::Literal(right)) => {
-//                 assert_eq!(left, "c");
-//                 assert_eq!(right.to_string(), "\"<EOF>\"");
-//             }
-//             _ => panic!("Expected an EOF mismatch, got {:?}", err),
-//         }
-//     }
-
-//     // Test 11: Extra tokens in actual tokens
-//     {
-//         let expected: TokenStream = "a b".parse().unwrap();
-//         let mut actual_iter = "a b c;".parse::<TokenStream>().unwrap().into_iter();
-//         parse_exact_match(expected, &mut actual_iter).unwrap();
-//     }
-// }
 
 use crate::basic_parsing::Combinator;
 
@@ -615,6 +507,18 @@ impl<'a> Combinator<'a,Vec<TokenTree>> for ExactTokens {
 		let mut v = Vec::with_capacity(10);
 		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
 		Ok((cursor,v))
+	}
+}
+
+// #[derive(Debug, Clone)]
+pub struct ExactTokensIgnore(pub TokenBuffer);
+impl<'a> Combinator<'a,()> for ExactTokensIgnore {
+
+	fn parse(&mut self, actual: syn::buffer::Cursor<'a>) 
+	-> Result<(syn::buffer::Cursor<'a>, ()), syn::Error> 
+	{ 	
+		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,None)?;
+		Ok((cursor,()))
 	}
 }
 
