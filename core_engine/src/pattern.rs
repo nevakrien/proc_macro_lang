@@ -13,7 +13,7 @@ use std::rc::Rc;
 
 ///Used to represent a parser that returns `CapturedPattern`
 ///this struct is cheap to copy since it uses Rc internally
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub enum Pattern {
 	Exact(Rc<ExactTokens>),
 	Delimited(Rc<Pattern>, Delimiter),

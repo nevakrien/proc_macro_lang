@@ -1,10 +1,11 @@
+use crate::pattern::RcTokenBuffer;
 use crate::pattern::Pattern;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use syn::Ident;
 
-#[derive(Debug, PartialEq, Eq, Hash)]
+#[derive(Debug,Clone, PartialEq, Eq, Hash)]
 pub struct Unique(u64);
 
 // A global static atomic counter for unique ID generation
@@ -52,12 +53,12 @@ pub enum CodeType {
     OpChar,
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct DeclPat {
-    //declared pattern
+    // declared pattern
     unique: Unique,
-    pub source_code: proc_macro2::TokenStream,
-    pub pattern: Box<[Pattern]>,//args 1 by 1
+    pub source_code: RcTokenBuffer,
+    pub pattern: Pattern,
 }
 
 impl PartialEq for DeclPat {
@@ -66,10 +67,10 @@ impl PartialEq for DeclPat {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Block {
     unique: Unique,
-    pub source_code: proc_macro2::TokenStream,
+    pub source_code: RcTokenBuffer,
 }
 
 impl PartialEq for Block {
@@ -78,7 +79,7 @@ impl PartialEq for Block {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Function {
     unique: Unique,
     pub name: Rc<Ident>,
@@ -92,11 +93,11 @@ impl PartialEq for Function {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Interface {
     unique: Unique,
     pub name: Rc<Ident>,
-    pub methods: Vec<Rc<Function>>,
+    pub methods: Vec<Function>,
 }
 
 impl PartialEq for Interface {
@@ -128,7 +129,7 @@ impl StructDef {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug,Clone)]
 pub struct Type {
     pub data: TypeData,
     unique: Unique,
@@ -147,7 +148,7 @@ impl PartialEq for Type {
             (Iter(i1), Iter(i2)) => i1 == i2,
             (Array(a1), Array(a2)) => a1 == a2,
             (Union(u1), Union(u2)) => {
-                u1.len() == u2.len() && u1.iter().zip(u2).all(|(a, b)| a == b)
+                u1.len() == u2.len() && (*u1).iter().zip((*u2).iter()).all(|(a, b)| a == b)
             }
 
             _ => self.unique == other.unique,
@@ -221,7 +222,7 @@ impl Type {
     }
 
     /// Constructs a new `Union` type with the given variants.
-    pub fn union(variants: Box<[Rc<Type>]>) -> Self {
+    pub fn union(variants: Rc<[Type]>) -> Self {
         Type {
             data: TypeData::Union(variants),
             unique: Unique::new(),
@@ -251,7 +252,7 @@ pub enum TypeData {
     Type,
 
     Alias(Rc<Type>),
-    Union(Box<[Rc<Type>]>),
+    Union(Rc<[Type]>),
 
     Checked(Rc<Type>),
     Iter(Rc<Type>),
