@@ -18,7 +18,7 @@ impl Combinator<Object> for MatchParser {
     {   
         let mut v = Vec::with_capacity(3);
         let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
-        Ok((cursor,Object::new(v,self.type_info())))
+        Ok((cursor,Object::from_iter(v.into_iter(),self.type_info())))
     }
 }
 

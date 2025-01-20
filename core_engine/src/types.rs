@@ -1,3 +1,7 @@
+use proc_macro2::Literal;
+use proc_macro2::Group;
+use proc_macro2::Punct;
+use proc_macro2::TokenTree;
 use syn::buffer::Cursor;
 use std::fmt::Debug;
 use crate::basic_parsing::Combinator;
@@ -85,22 +89,108 @@ impl Type{
 }
 
 impl From<BasicType> for Type{
-	fn from(t: BasicType) -> Self { Type::Basic(t)}
+
+fn from(t: BasicType) -> Self { Type::Basic(t) }
 }
+
+#[derive(Debug,Clone)]
+pub enum ObjData{
+	Basic(BasicData),
+	Array(Rc<[Object]>),
+	Struct(Rc<StructData>),
+	External(Rc<dyn Any>)
+}
+
+#[derive(Debug,Clone)]
+pub enum BasicData {
+    Tree(TokenTree),//token tree
+    Number(i64),
+    None,
+
+    Literal(Literal),
+    Word(Ident),
+    Punc(Punct),
+    Group(Group),
+    /*might want:
+    	Token
+    	...
+    */
+}
+
+macro_rules! impl_from_for_basicdata {
+    ($($ty:ty => $variant:path),* $(,)?) => {
+        $(
+            impl From<$ty> for ObjData {
+                fn from(data: $ty) -> Self {
+                    ObjData::Basic($variant(data))
+                }
+            }
+        )*
+    };
+}
+
+impl_from_for_basicdata! {
+    TokenTree => BasicData::Tree,
+    Literal => BasicData::Literal,
+    Ident => BasicData::Word,
+    Punct => BasicData::Punc,
+    Group => BasicData::Group,
+    i64 => BasicData::Number,
+}
+
+impl From<()> for ObjData {
+    fn from(_data: ()) -> Self {
+        ObjData::Basic(BasicData::None)
+    }
+}
+impl From<Vec<Object>> for ObjData {
+    fn from(data: Vec<Object>) -> Self {
+        ObjData::Array(Rc::from(data.into_boxed_slice()))
+    }
+}
+
+// impl<T, I> From<I> for ObjData where T : Into<Object>,I:Iterator<Item = T> {
+//     fn from(data: Vec<Object>) -> Self {
+//     	ObjData::Array(Rc::from(data.iter().map(|x| x.into)))
+//     }
+// }
+
+impl From<StructData> for ObjData {
+    fn from(data: StructData) -> Self {
+        ObjData::Struct(Rc::new(data))
+    }
+}
+
+impl From<TokenTree> for Object {
+    fn from(data: TokenTree) -> Self {
+        Object::new(data,BasicType::Tree.into())
+    }
+}
+
 
 
 #[derive(Debug,Clone)]
 pub struct Object{
-	pub data: Rc<dyn Any>,
+	pub data: ObjData,//Rc<dyn Any>,
 	pub type_info: Type,
 }
 
+
+
 impl Object {
-	pub fn new<T: 'static>(data:T,type_info: Type) -> Self {
+	pub fn new<T:Into<ObjData>>(data:T,type_info: Type) -> Self {
 		Object{
-			data: Rc::new(data),
+			data:data.into(),
 			type_info
 		}
+	}
+
+	pub fn from_iter<I : Iterator<Item: Into<Object>>>(data:I,type_info: Type) -> Self{
+		Object{
+			data:ObjData::Array(data.map(|x| x.into()).collect()),
+			type_info
+		}
+
 	}
 }
 
@@ -260,11 +350,10 @@ use super::*;
 	    );
 
 	    // Check the captured fields and their types
-	    let captured_fields: StructData = object
-	        .data
-	        .downcast_ref::<StructData>()
-	        .unwrap()
-	        .clone();
+	    let captured_fields: StructData = match object.data {
+	        ObjData::Struct(ref struct_data) => (**struct_data).clone(),
+	        _ => panic!("Expected ObjData::Struct, found {:?}", object.data),
+	    };
 
 	    // Verify the captured fields contain the expected keys
 	    assert!(captured_fields.contains_key(&parse_quote! { field1 }));
@@ -272,19 +361,20 @@ use super::*;
 	    assert!(captured_fields.contains_key(&parse_quote! { field3 }));
 
 	    // Verify the types of the captured fields
-	    assert_eq!(
-	        captured_fields[&parse_quote! { field1 }].type_info,
-	        Type::from(BasicType::Literal)
-	    );
-	    assert_eq!(
-	        captured_fields[&parse_quote! { field2 }].type_info,
-	        Type::from(BasicType::Word)
-	    );
-	    assert_eq!(
-	        captured_fields[&parse_quote! { field3 }].type_info,
-	        Type::from(BasicType::Punc)
-	    );
+	    match &captured_fields[&parse_quote! { field1 }].data {
+	        ObjData::Basic(BasicData::Literal(_)) => {}
+	        _ => panic!("Expected BasicData::Literal for field1"),
+	    }
+	    match &captured_fields[&parse_quote! { field2 }].data {
+	        ObjData::Basic(BasicData::Word(_)) => {}
+	        _ => panic!("Expected BasicData::Word for field2"),
+	    }
+	    match &captured_fields[&parse_quote! { field3 }].data {
+	        ObjData::Basic(BasicData::Punc(_)) => {}
+	        _ => panic!("Expected BasicData::Punc for field3"),
+	    }
 	}
+
 
 
     #[test]

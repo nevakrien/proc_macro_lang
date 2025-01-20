@@ -98,7 +98,7 @@ impl Combinator<Object> for Recognize{
 			cursor2=new;
 		}
 		
-		Ok((cursor,Object::new(ans,self.type_info())))
+		Ok((cursor,Object::from_iter(ans.into_iter(),self.type_info())))
 	}
 }
 
@@ -108,7 +108,9 @@ impl ObjectParser for Recognize{
 
 #[cfg(test)]
 mod tests {
-	
+	use crate::types::ObjData;
+	use proc_macro2::TokenTree;
+	use crate::types::BasicData;
 	use proc_macro2::TokenStream;
 	use crate::basic_parsing::PuncParser;
 	use crate::basic_parsing::LiteralParser;
@@ -215,36 +217,35 @@ use super::*;
 	        "Expected remaining cursor to be at the end, but found more tokens."
 	    );
 
-	    // Downcast the Object's data to Vec<TokenTree>
-	    let matched_tokens: Vec<proc_macro2::TokenTree> = object
-	        .data
-	        .downcast_ref::<Vec<proc_macro2::TokenTree>>()
-	        .unwrap()
-	        .clone(); // Unwrap here for better diagnostics
+	    // Extract ObjData::Array from the Object
+	    let matched_tokens: &[Object] = match &object.data {
+	        ObjData::Array(array) => array,
+	        _ => panic!("Expected ObjData::Array, found {:?}", object.data),
+	    };
 
-	    // Verify the tokens
+	    // Verify the number of matched tokens
 	    assert_eq!(
 	        matched_tokens.len(),
 	        3,
 	        "Expected 3 matched tokens, but found {}",
 	        matched_tokens.len()
 	    );
-	    assert!(
-	        matches!(matched_tokens[0], proc_macro2::TokenTree::Literal(_)),
-	        "Expected first token to be a Literal, but found: {:?}",
-	        matched_tokens[0]
-	    );
-	    assert!(
-	        matches!(&matched_tokens[1], proc_macro2::TokenTree::Ident(ident) if ident == "foo"),
-	        "Expected second token to be Ident(\"foo\"), but found: {:?}",
-	        matched_tokens[1]
-	    );
-	    assert!(
-	        matches!(&matched_tokens[2], proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '!'),
-	        "Expected third token to be Punct('!'), but found: {:?}",
-	        matched_tokens[2]
-	    );
+
+	    // Verify each matched token is correctly converted to TokenTree
+	    match &matched_tokens[0].data {
+	        ObjData::Basic(BasicData::Tree(TokenTree::Literal(_))) => {}
+	        _ => panic!("Expected first token to be a Literal, but found {:?}", matched_tokens[0].data),
+	    }
+	    match &matched_tokens[1].data {
+	        ObjData::Basic(BasicData::Tree(TokenTree::Ident(ident))) if ident == "foo" => {}
+	        _ => panic!("Expected second token to be Ident(\"foo\"), but found {:?}", matched_tokens[1].data),
+	    }
+	    match &matched_tokens[2].data {
+	        ObjData::Basic(BasicData::Tree(TokenTree::Punct(punct))) if punct.as_char() == '!' => {}
+	        _ => panic!("Expected third token to be Punct('!'), but found {:?}", matched_tokens[2].data),
+	    }
 	}
+
 
 
     #[test]
