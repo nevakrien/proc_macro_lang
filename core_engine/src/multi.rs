@@ -56,8 +56,9 @@ pub struct OneOf(pub Box<[Rc<dyn ObjectParser>]>,Type);
 
 impl OneOf{
 	pub fn new (parsers:Box<[Rc<dyn ObjectParser>]>) -> Self {
-		let t = parsers.iter().map(|x| x.type_info()).collect();
-		OneOf(parsers,Type::Union(t))
+		let t = parsers.iter().map(|x| x.type_info());
+		let t = Type::new_union(t);
+		OneOf(parsers,t)
 	}
 }
 
@@ -84,7 +85,7 @@ pub struct Maybe(pub Rc<dyn ObjectParser>,Type);
 impl Maybe{
 	pub fn new (parser:Rc<dyn ObjectParser>) -> Self {
 		let t = parser.type_info();
-		Maybe(parser,Type::Union([t,BasicType::None.into()].into()))
+		Maybe(parser,Type::new_union([t,BasicType::None.into()].into_iter()))
 	}
 }
 

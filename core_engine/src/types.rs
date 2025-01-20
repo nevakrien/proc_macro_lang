@@ -1,3 +1,5 @@
+use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use proc_macro2::Literal;
 use proc_macro2::Group;
 use proc_macro2::Punct;
@@ -9,12 +11,12 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::collections::hash_map::Entry;
+use std::collections::btree_map::Entry as BEntry;
 use proc_macro2::{Ident};
 
 
 //for aliasing we need a unique id
-#[derive(Debug,Clone, PartialEq, Eq, Hash)]
+#[derive(Debug,Clone, PartialEq, Eq, Hash,PartialOrd,Ord)]
 pub struct Unique(u64);
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -56,7 +58,7 @@ impl Default for Unique {
     }
 }
 
-#[derive(Debug,Clone, PartialEq, Eq)]
+#[derive(Debug,Clone, PartialEq, Eq,Hash,PartialOrd,Ord)]
 pub enum BasicType {
     Tree,//token tree
     Int,
@@ -72,19 +74,86 @@ pub enum BasicType {
     */
 }
 
-#[derive(Debug,Clone, PartialEq, Eq)]
+///# Type info for Object.
+///
+/// This type is used by signatures and objects. 
+///
+/// Unions would not be found directly on objects. Instead the type of the specific member. 
+///
+/// We hold these in ordered sets to allow for good hashing (larger collections can be heled in a hash table).
+#[derive(Debug,Clone, PartialEq, Eq,Hash)]
+#[repr(i8)]
 pub enum Type{
-	Basic(BasicType),
-	Array(Rc<Type>),
+	Basic(BasicType)=0,
+	Array(Rc<Type>) ,
 	Struct(Rc<StructTypes>),
 	Alias(Rc<Type>,Unique),
-	Union(Rc<[Type]>),
-	External(Unique)
+	Union(Rc<BTreeSet<Type>>),
+	External(Unique),
 }
+
+impl Type{
+	pub fn get_id(&self) -> i8 {
+		use Type::*;
+		match self{
+			Basic(_)=>0,
+			Array(_)=>1,
+			Struct(_)=>2,
+			Alias(_, _)=>3,
+			Union(_)=>4,
+			External(_)=>5,
+		}
+	}
+}
+
+impl Ord for Type {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use Type::*;
+
+        match (self, other) {
+            // Compare Basic types
+            (Basic(a), Basic(b)) => a.cmp(b),
+
+            // Compare Arrays by their inner type
+            (Array(a), Array(b)) => a.cmp(b),
+
+            // Compare Structs
+            (Struct(a), Struct(b)) => a.cmp(b),
+
+            // Compare Aliases by their inner type and unique ID
+            (Alias(_, u1), Alias(_, u2)) => u1.cmp(u2),
+
+            // Compare Unions lexicographically
+            (Union(u1), Union(u2)) => u1.cmp(u2),
+
+            // Compare External types by their unique ID
+            (External(u1), External(u2)) => u1.cmp(u2),
+            _ => self.get_id().cmp(&other.get_id())
+
+           
+        }
+    }
+}
+
+impl PartialOrd for Type {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+
 
 impl Type{
 	pub fn new_external() ->Self{
 		Type::External(Unique::new())
+	}
+
+	pub fn new_union<I:Iterator<Item=Type>>(input:I) ->Self{
+		let mut set = BTreeSet::new();
+		for i in input{
+			set.insert(i);
+		}
+		Type::Union(set.into())
 	}
 }
 
@@ -93,6 +162,14 @@ impl From<BasicType> for Type{
 fn from(t: BasicType) -> Self { Type::Basic(t) }
 }
 
+
+///Data heled by an object (usually passed by value). 
+///
+///This type is cheap to clone and is intended to move around a lot.
+///
+///Structs are Rc since a lot of the time get_mut would work for essentially free. For other cases having Rc here is best. 
+///
+///Note that the alias and union information is lost here.
 #[derive(Debug,Clone)]
 pub enum ObjData{
 	Basic(BasicData),
@@ -168,10 +245,13 @@ impl From<TokenTree> for Object {
 }
 
 
-
+///All data heled by the runtime.
+///
+///Unions type information is lost here
 #[derive(Debug,Clone)]
 pub struct Object{
-	pub data: ObjData,//Rc<dyn Any>,
+	pub data: ObjData,
+	///missing union info
 	pub type_info: Type,
 }
 
@@ -202,7 +282,8 @@ impl Object {
 }
 
 pub type StructData = HashMap<Ident,Object>;
-pub type StructTypes = HashMap<Ident,Type>;
+/// We hold these in ordered set to allow for good hashing
+pub type StructTypes = BTreeMap<Ident,Type>;
 pub type ArrayData = Vec<Object>;
 
 #[test]
@@ -226,7 +307,7 @@ pub struct StructParser(pub Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>,pub Rc<S
 
 impl StructParser{
 	pub fn new(fields:Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>) -> Result<Self,syn::Error>{
-		let mut types = Rc::new(StructTypes::with_capacity(fields.len()));
+		let mut types = Rc::new(StructTypes::new());
 		let r = Rc::get_mut(&mut types).unwrap();
 		let mut error_map :HashMap<Ident,Vec<Ident>> = HashMap::new();
 
@@ -235,8 +316,8 @@ impl StructParser{
 		.map(|(i,parser)| (i.as_ref().unwrap(),parser)) 
 		{
 			match r.entry(ident.clone()) {
-				Entry::Vacant(spot) => {spot.insert(parser.type_info());},
-			    Entry::Occupied(spot) => {
+				BEntry::Vacant(spot) => {spot.insert(parser.type_info());},
+			    BEntry::Occupied(spot) => {
 			    	error_map.entry(ident.clone())
 			    		.or_insert_with(||vec![spot.key().clone()])
 			    		.push(ident.clone())
