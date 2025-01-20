@@ -8,37 +8,37 @@ use syn::parse_str;
 
 
 
-pub trait Combinator<'a, T, E = syn::Error>
+pub trait Combinator<T, E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
 }
 
-pub trait MutCombinator<'a, T, E = syn::Error>
+pub trait MutCombinator<T, E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse_mut(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+    fn parse_mut<'a>(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
 }
 
 // Automatically implement MutCombinator for all Combinators
-impl<'a, T, E, C> MutCombinator<'a, T, E> for C
+impl<T, E, C> MutCombinator< T, E> for C
 where
-    C: Combinator<'a, T, E>,
+    C: Combinator<T, E>,
     E: std::error::Error,
 {
-    fn parse_mut(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E> {
+    fn parse_mut<'a>(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E> {
         // Delegate to the immutable version of parse
         Combinator::parse(self, input)
     }
 }
 
-pub trait BasicCombinator<'a, E = syn::Error>
+pub trait BasicCombinator<E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), E>
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), E>
     where
         Self: Sized;
 }
@@ -46,9 +46,9 @@ where
 #[derive(Debug, Clone)]
 pub struct TokenLiteral(pub TokenStream);
 
-impl<'a> BasicCombinator<'a,  syn::Error> for TokenLiteral {
+impl BasicCombinator< syn::Error> for TokenLiteral {
     #[inline]
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TokenLiteral), syn::Error> {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, TokenLiteral), syn::Error> {
         if let Some((ans,_, next)) = input.group(proc_macro2::Delimiter::Bracket) {
             Ok((next, TokenLiteral(ans.token_stream())))
         } else {
@@ -82,8 +82,8 @@ pub enum TerminalPatern {
 
 }
 
-impl<'a> BasicCombinator<'a, syn::Error> for TerminalPatern {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error> {
+impl BasicCombinator<syn::Error> for TerminalPatern {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error> {
         static ERROR_MESSAGE: &str = "expected one of [tokens] 'any 'group 'literal 'word 'punc";
 
         // Attempt to parse exact tokens first
@@ -135,8 +135,8 @@ fn match_terminals() {
 #[derive(Debug)]
 pub struct LiteralCombinator(pub Literal);
 
-impl<'a> BasicCombinator<'a> for LiteralCombinator {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+impl BasicCombinator for LiteralCombinator {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Literal(lit), next)) => Ok((next, LiteralCombinator(lit))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal (number or string)")),
@@ -148,8 +148,8 @@ impl<'a> BasicCombinator<'a> for LiteralCombinator {
 #[derive(Debug)]
 pub struct WordCombinator(pub Ident);
 
-impl<'a> BasicCombinator<'a> for WordCombinator {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+impl BasicCombinator for WordCombinator {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Ident(ident), next)) => Ok((next, WordCombinator(ident))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected an identifier")),
@@ -161,8 +161,8 @@ impl<'a> BasicCombinator<'a> for WordCombinator {
 #[derive(Debug)]
 pub struct PuncCombinator(pub Punct);
 
-impl<'a> BasicCombinator<'a> for PuncCombinator {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+impl BasicCombinator for PuncCombinator {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Punct(punct), next)) => Ok((next, PuncCombinator(punct))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of +!#?.'& etc")),
@@ -174,8 +174,8 @@ impl<'a> BasicCombinator<'a> for PuncCombinator {
 #[derive(Debug)]
 pub struct GroupCombinator(pub Group);
 
-impl<'a> BasicCombinator<'a> for GroupCombinator {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+impl BasicCombinator for GroupCombinator {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Group(group), next)) => {
                 Ok((next, GroupCombinator(group)))
@@ -189,8 +189,8 @@ impl<'a> BasicCombinator<'a> for GroupCombinator {
 #[derive(Debug)]
 pub struct AnyCombinator(pub TokenTree);
 
-impl<'a> BasicCombinator<'a> for AnyCombinator {
-    fn parse(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+impl BasicCombinator for AnyCombinator {
+    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
         match input.token_tree() {
             Some((tree, next)) => {
                 Ok((next, AnyCombinator(tree)))
@@ -285,8 +285,8 @@ impl DelParser{
 	}
 }
 
-impl<'a> Combinator<'a, TokenStream> for DelParser {
-    fn parse(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
+impl Combinator<TokenStream> for DelParser {
+    fn parse<'a>(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
             Some((group, _, next)) => {
                 Ok((next, group.token_stream()))
@@ -300,9 +300,9 @@ impl<'a> Combinator<'a, TokenStream> for DelParser {
 }
 
 #[derive(Clone)]
-pub struct DelCombParser<T> (pub DelParser,pub Rc<dyn for<'a> Combinator<'a,T>>);
-impl<'a, T> Combinator<'a, T> for DelCombParser<T> {
-	fn parse(&self, input: syn::buffer::Cursor<'a>) 
+pub struct DelCombParser<T> (pub DelParser,pub Rc<dyn Combinator<T>>);
+impl< T> Combinator< T> for DelCombParser<T> {
+	fn parse<'a>(&self, input: syn::buffer::Cursor<'a>) 
 	-> Result<(syn::buffer::Cursor<'a>, T), syn::Error> {
 		let (cursor,inner) = self.0.parse(input)?;
 		let buff = TokenBuffer::new2(inner);

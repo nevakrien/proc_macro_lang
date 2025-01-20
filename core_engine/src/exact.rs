@@ -187,9 +187,9 @@ fn parse_exact_match<'a,'b>(actual: Cursor<'a>,expected:Cursor<'b>,del:Delimiter
 
 #[derive(Debug, Clone)]
 pub struct MatchParser(pub RcTokenBuffer);
-impl<'a> Combinator<'a,Object> for MatchParser {
+impl Combinator<Object> for MatchParser {
 
-	fn parse(&self, actual: syn::buffer::Cursor<'a>) 
+	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
 	-> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(3);
@@ -201,9 +201,9 @@ impl<'a> Combinator<'a,Object> for MatchParser {
 
 // #[derive(Debug, Clone)]
 pub struct ExactTokens(pub TokenBuffer);
-impl<'a> Combinator<'a,Vec<TokenTree>> for ExactTokens {
+impl Combinator<Vec<TokenTree>> for ExactTokens {
 
-	fn parse(&self, actual: syn::buffer::Cursor<'a>) 
+	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
 	-> Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(10);
