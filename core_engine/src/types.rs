@@ -192,6 +192,13 @@ impl Object {
 		}
 
 	}
+
+	pub fn none() -> Self{
+		Object{
+			data:().into(),
+			type_info:BasicType::None.into()
+		}
+	}
 }
 
 pub type StructData = HashMap<Ident,Object>;

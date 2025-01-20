@@ -79,6 +79,29 @@ impl ObjectParser for OneOf{
 }
 
 #[derive(Debug)]
+pub struct Maybe(pub Rc<dyn ObjectParser>,Type);
+
+impl Maybe{
+	pub fn new (parser:Rc<dyn ObjectParser>) -> Self {
+		let t = parser.type_info();
+		Maybe(parser,Type::Union([t,BasicType::None.into()].into()))
+	}
+}
+
+impl Combinator<Object> for Maybe{
+	fn parse<'a>(&self,input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+		match self.0.parse(input){
+			Ok(x) => Ok(x),
+			Err(_e) => Ok((input,Object::none()))
+		}
+	}
+}
+
+impl ObjectParser for Maybe{
+	fn type_info(&self) -> Type {self.1.clone()}
+}
+
+#[derive(Debug)]
 pub struct Recognize(pub Box<[Rc<dyn ObjectParser>]>);
 
 impl Combinator<Object> for Recognize{
@@ -156,6 +179,29 @@ use super::*;
 
 	    // Should error (Many1 requires at least one match)
 	    assert!(result.is_err());
+	}
+
+	#[test]
+    fn test_maybe_no_error() {
+        let token_buffer = RcTokenBuffer(Rc::new(TokenBuffer::new2(syn::parse_quote! { mock_input })));
+        let match_parser = Rc::new(MatchParser(token_buffer.clone()));
+        let maybe = Maybe::new(match_parser.clone());
+
+	    let input = RcTokenBuffer(Rc::new(TokenBuffer::new2(syn::parse_quote! {mock_input.})));
+        let (cursor,_) = maybe.parse(input.begin()).unwrap();
+        assert!(cursor.punct().is_some())
+
+    }
+
+	#[test]
+	fn test_maybe_with_error() {
+	    let token_buffer = RcTokenBuffer(Rc::new(TokenBuffer::new2(syn::parse_quote! { mock_input })));
+        let match_parser = Rc::new(MatchParser(token_buffer.clone()));
+        let maybe = Maybe::new(match_parser.clone());
+
+	    let input = RcTokenBuffer(Rc::new(TokenBuffer::new2(syn::parse_quote! {.})));
+        let (cursor,_) = maybe.parse(input.begin()).unwrap();
+        assert!(cursor.punct().is_some())
 	}
 
 	#[test]
