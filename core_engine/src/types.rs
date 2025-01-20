@@ -49,10 +49,14 @@ impl Default for Unique {
 
 #[derive(Debug,Clone, PartialEq, Eq)]
 pub enum BasicType {
-    Token,
+    Tree,//token tree
     Number,
+
+    Literal,
+    Word,
+    Punc,
+    Group
     /*might want:
-    	Type
     	Token
     	...
     */

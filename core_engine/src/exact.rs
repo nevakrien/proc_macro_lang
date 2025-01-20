@@ -24,7 +24,7 @@ impl Combinator<Object> for MatchParser {
 
 impl ObjectParser for MatchParser{
 
-fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Token.into()))}
+fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Tree.into()))}
 }
 
 

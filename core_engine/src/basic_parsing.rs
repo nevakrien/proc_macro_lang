@@ -1,13 +1,11 @@
 #![allow(clippy::from_over_into)]
 
 use crate::types::{Type,Object,ObjectParser};
+use crate::types::BasicType;
+
 use std::rc::Rc;
 use crate::syn::buffer::{Cursor,TokenBuffer};
 use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct};
-
-
-#[cfg(test)]
-use syn::parse_str;
 
 
 pub trait Combinator<T, E = syn::Error>
@@ -32,172 +30,84 @@ E: std::error::Error, {
 }
     
 
-pub trait BasicCombinator<E = syn::Error>
-where
-    E: std::error::Error,
-{
-    fn parse(input: Cursor) -> Result<(Cursor, Self), E>
-    where
-        Self: Sized;
-}
-
-#[derive(Debug, Clone)]
-pub struct TokenLiteral(pub TokenStream);
-
-impl BasicCombinator< syn::Error> for TokenLiteral {
-    #[inline]
-    fn parse(input: Cursor) -> Result<(Cursor, TokenLiteral), syn::Error> {
-        if let Some((ans,_, next)) = input.group(proc_macro2::Delimiter::Bracket) {
-            Ok((next, TokenLiteral(ans.token_stream())))
-        } else {
-            Err(syn::Error::new(input.span(), "Expected [tokens]"))
-        }
+fn parse_literal(input: Cursor) -> Result<(Cursor, Literal), syn::Error> {
+    match input.token_tree() {
+        Some((TokenTree::Literal(lit), next)) => Ok((next, lit)),
+        Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal (number or string)")),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a literal")),
     }
 }
 
-impl Into<TokenStream> for TokenLiteral {
-    fn into(self) -> proc_macro2::TokenStream {
-        self.0
+fn parse_word(input: Cursor) -> Result<(Cursor, Ident), syn::Error> {
+    match input.token_tree() {
+        Some((TokenTree::Ident(ident), next)) => Ok((next, ident)),
+        Some((other, _)) => Err(syn::Error::new(other.span(), "Expected an identifier")),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting an identifier")),
     }
 }
 
-#[test]
-fn literal_tokens_parse() {
-	let tokens = TokenBuffer::new2("[let x [=] 42;]".parse().unwrap());
-    let cursor = tokens.begin();
-
-    TokenLiteral::parse(cursor).expect("Failed to parse");
-}
-
-pub enum TerminalPatern {
-	Exact(TokenStream),
-	Any,
-
-    Literal,
-    Word,
-    Punc,
-    Group
-
-}
-
-impl BasicCombinator<syn::Error> for TerminalPatern {
-    fn parse(input: Cursor) -> Result<(Cursor, TerminalPatern), syn::Error> {
-        static ERROR_MESSAGE: &str = "expected one of [tokens] 'any 'group 'literal 'word 'punc";
-
-        // Attempt to parse exact tokens first
-        if let Ok((input, ans)) = TokenLiteral::parse(input) {
-            return Ok((input, TerminalPatern::Exact(ans.into())));
-        }
-
-        // Attempt to parse a lifetime (e.g., 'any, 'literal)
-        match input.lifetime() {
-            Some((lifetime, new_input)) => {
-                match lifetime.ident.to_string().as_str() {
-                    "any" => Ok((new_input, TerminalPatern::Any)),
-                    "word" => Ok((new_input, TerminalPatern::Word)),
-                    "literal" => Ok((new_input, TerminalPatern::Literal)),
-                    "punc" => Ok((new_input, TerminalPatern::Punc)),
-                    "group" => Ok((new_input, TerminalPatern::Group)),
-                    _ => Err(syn::Error::new(lifetime.span(), ERROR_MESSAGE)),
-                }
-            },
-            None => Err(syn::Error::new(input.span(), ERROR_MESSAGE)),
-        }
-    }
-}
-
-
-#[test]
-fn match_terminals() {
-    let binding = TokenBuffer::new2(parse_str("[5 aadsw]").unwrap());
-    let input = binding.begin();
-    let parsed = TerminalPatern::parse(input).expect("Failed to parse exact token");
-    match parsed {
-        (_,TerminalPatern::Exact(_)) => (),
-        _ => panic!("Expected TerminalPatern::Exact"),
-    }
-
-    let binding = TokenBuffer::new2(parse_str("'word").unwrap());
-    let input = binding.begin();
-    let (_,parsed)= TerminalPatern::parse(input).expect("Failed to parse 'word'");
-    assert!(matches!(parsed, TerminalPatern::Word));
-
-
-    let binding = TokenBuffer::new2(parse_str("123invalid").unwrap());
-    let input = binding.begin();
-    let result = TerminalPatern::parse(input);
-    assert!(result.is_err(), "Expected parsing error for invalid input");
-}
-
-
-#[derive(Debug)]
-pub struct LiteralCombinator(pub Literal);
-
-impl BasicCombinator for LiteralCombinator {
-    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
+fn parse_punc(input: Cursor) -> Result<(Cursor, Punct), syn::Error> {
         match input.token_tree() {
-            Some((TokenTree::Literal(lit), next)) => Ok((next, LiteralCombinator(lit))),
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal (number or string)")),
-            None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a literal")),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct WordCombinator(pub Ident);
-
-impl BasicCombinator for WordCombinator {
-    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
-        match input.token_tree() {
-            Some((TokenTree::Ident(ident), next)) => Ok((next, WordCombinator(ident))),
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected an identifier")),
-            None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting an identifier")),
-        }
-    }
-}
-
-#[derive(Debug)]
-pub struct PuncCombinator(pub Punct);
-
-impl BasicCombinator for PuncCombinator {
-    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
-        match input.token_tree() {
-            Some((TokenTree::Punct(punct), next)) => Ok((next, PuncCombinator(punct))),
+            Some((TokenTree::Punct(punct), next)) => Ok((next,punct)),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of +!#?.'& etc")),
             None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting punctuation")),
         }
     }
-}
 
-#[derive(Debug)]
-pub struct GroupCombinator(pub Group);
-
-impl BasicCombinator for GroupCombinator {
-    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
-        match input.token_tree() {
-            Some((TokenTree::Group(group), next)) => {
-                Ok((next, GroupCombinator(group)))
-            }
-            Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of [...] (...) {...}")),
-            None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a group")),
+fn parse_group(input: Cursor) -> Result<(Cursor, Group), syn::Error> {
+    match input.token_tree() {
+        Some((TokenTree::Group(group), next)) => {
+            Ok((next, group))
         }
+        Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of [...] (...) {...}")),
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF while expecting a group")),
     }
 }
 
-#[derive(Debug)]
-pub struct AnyCombinator(pub TokenTree);
 
-impl BasicCombinator for AnyCombinator {
-    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
-        match input.token_tree() {
-            Some((tree, next)) => {
-                Ok((next, AnyCombinator(tree)))
-            }
 
-            None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF")),
+fn parse_any(input: Cursor) -> Result<(Cursor, TokenTree), syn::Error> {
+    match input.token_tree() {
+        Some((tree, next)) => {
+            Ok((next, tree))
         }
+
+        None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF")),
     }
 }
+
+macro_rules! define_parser {
+    ($name:ident, $parse_fn:ident, $basic_type:expr) => {
+        #[derive(Debug, Clone, Copy)]
+        pub struct $name;
+
+        impl Combinator<Object> for $name {
+            fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+                let (next, token) = $parse_fn(input)?;
+                Ok((next, Object::new(token,self.type_info())))
+            }
+        }
+
+        impl ObjectParser for $name {
+            fn type_info(&self) -> Type {
+            	use BasicType::*;
+                Type::Basic($basic_type)
+            }
+        }
+    };
+}
+
+define_parser!(LiteralParser, parse_literal, Literal);
+define_parser!(WordParser, parse_word, Word);
+define_parser!(PuncParser, parse_punc, Punc);
+define_parser!(GroupParser, parse_group, Group);
+define_parser!(AnyParser, parse_any, Tree);
+
+#[test]
+fn test_dumby_dyn_structs(){
+	let _any :Rc<dyn ObjectParser> = Rc::new(AnyParser);
+}
+
 
 #[test]
 fn test_basic_combinators() {
@@ -209,8 +119,8 @@ fn test_basic_combinators() {
     let mut cursor = buffer.begin();
 
     // Test LiteralCombinator (success)
-    match LiteralCombinator::parse(cursor) {
-        Ok((next, LiteralCombinator(literal))) => {
+    match parse_literal(cursor) {
+        Ok((next,literal)) => {
             assert_eq!(literal.to_string(), "42");
             cursor = next;
         }
@@ -218,8 +128,8 @@ fn test_basic_combinators() {
     }
 
     // Test WordCombinator (success)
-    match WordCombinator::parse(cursor) {
-        Ok((next, WordCombinator(ident))) => {
+    match parse_word(cursor) {
+        Ok((next, ident)) => {
             assert_eq!(ident.to_string(), "identifier");
             cursor = next;
         }
@@ -227,8 +137,8 @@ fn test_basic_combinators() {
     }
 
     // Test PuncCombinator (success)
-    match PuncCombinator::parse(cursor) {
-        Ok((next, PuncCombinator(punct))) => {
+    match parse_punc(cursor) {
+        Ok((next, punct)) => {
             assert_eq!(punct.as_char(), '+');
             cursor = next;
         }
@@ -236,8 +146,8 @@ fn test_basic_combinators() {
     }
 
     // Test ParenCombinator (success)
-    match GroupCombinator::parse(cursor) {
-        Ok((next, GroupCombinator(group))) => {
+    match parse_group(cursor) {
+        Ok((next, group)) => {
             assert_eq!(group.delimiter(), Delimiter::Parenthesis);
             assert_eq!(group.stream().to_string(), "inner");
             cursor = next;
@@ -246,15 +156,15 @@ fn test_basic_combinators() {
     }
 
     // Test LiteralCombinator (failure)
-    match LiteralCombinator::parse(cursor) {
+    match parse_literal(cursor) {
         Ok((_,x)) => panic!("Expected LiteralCombinator to fail, but it succeeded with {:?}",x),
         Err(_) => (),
     }
 
     // Move the cursor forward to ensure trailing data works
-    match AnyCombinator::parse(cursor) {
-        Ok((_, AnyCombinator(ident))) => {
-            assert_eq!(ident.to_string(), "invalid");
+    match parse_any(cursor) {
+        Ok((_, tree)) => {
+            assert_eq!(tree.to_string(), "invalid");
         }
         Err(err) => panic!("WordCombinator failed on trailing data: {}", err),
     }
