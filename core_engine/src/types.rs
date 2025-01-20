@@ -26,6 +26,10 @@ impl Unique {
     pub fn id(&self) -> u64 {
         self.0
     }
+    #[inline]
+    pub fn get_counter() -> u64{
+    	UNIQUE_COUNTER.fetch_add(0,Ordering::Relaxed)
+    }
 
     //this specifcly takes u32 to avoid wrap around risks
     //if for some reason u need more than a full u32 something went horibly wrong
@@ -71,8 +75,14 @@ pub enum Type{
 	Struct(Rc<StructTypes>),
 	Alias(Rc<Type>,Unique),
 	Union(Rc<[Type]>),
+	External(Unique)
 }
 
+impl Type{
+	pub fn new_external() ->Self{
+		Type::External(Unique::new())
+	}
+}
 
 impl From<BasicType> for Type{
 	fn from(t: BasicType) -> Self { Type::Basic(t)}
