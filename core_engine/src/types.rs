@@ -1,15 +1,23 @@
-use crate::pattern::RcTokenBuffer;
-use crate::pattern::Pattern;
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::any::Any;
 use std::sync::atomic::{AtomicU64, Ordering};
-use syn::Ident;
+
+
+#[repr(u64)] // This ensures the enum is represented as a u8 in memory.
+pub enum Types {
+	Token = 1,
+    Tokens,
+    Number,
+    Type,
+    Last
+}
 
 #[derive(Debug,Clone, PartialEq, Eq, Hash)]
 pub struct Unique(u64);
 
 // A global static atomic counter for unique ID generation
-static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(11); //5 code types +6 other
+static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(Types::Last as u64); //healthy distant to allow basicly infinite user types
 
 impl Unique {
     pub fn new() -> Self {
@@ -38,318 +46,32 @@ impl Unique {
     }
 }
 
+impl From<Types> for Unique{
+
+	fn from(t: Types) -> Self { Unique(t as u64) }
+}
+
 impl Default for Unique {
     fn default() -> Self {
         Self::new()
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum CodeType {
-    TokenStream,
-    ParenExp,
-    Word,
-    Literal,
-    OpChar,
-}
-
 #[derive(Debug,Clone)]
-pub struct DeclPat {
-    // declared pattern
-    unique: Unique,
-    pub source_code: RcTokenBuffer,
-    pub pattern: Pattern,
+pub struct Object{
+	pub data: Rc<dyn Any>,
+	pub type_id: Unique,
 }
 
-impl PartialEq for DeclPat {
-    fn eq(&self, other: &Self) -> bool {
-        self.unique == other.unique
-    }
+impl Object {
+	pub fn new<T: 'static>(data:T,type_id: Unique) -> Self {
+		Object{
+			data: Rc::new(data),
+			type_id
+		}
+	}
 }
 
-#[derive(Debug,Clone)]
-pub struct Block {
-    unique: Unique,
-    pub source_code: RcTokenBuffer,
-}
+pub type StructData = Rc<HashMap<proc_macro2::Ident,Object>>;
+pub type ArrayData = Rc<Vec<Object>>;
 
-impl PartialEq for Block {
-    fn eq(&self, other: &Self) -> bool {
-        self.unique == other.unique
-    }
-}
-
-#[derive(Debug,Clone)]
-pub struct Function {
-    unique: Unique,
-    pub name: Rc<Ident>,
-    pub pattern: Rc<DeclPat>,
-    pub block: Rc<Block>,
-}
-
-impl PartialEq for Function {
-    fn eq(&self, other: &Self) -> bool {
-        self.unique == other.unique
-    }
-}
-
-#[derive(Debug,Clone)]
-pub struct Interface {
-    unique: Unique,
-    pub name: Rc<Ident>,
-    pub methods: Vec<Function>,
-}
-
-impl PartialEq for Interface {
-    fn eq(&self, other: &Self) -> bool {
-        self.unique == other.unique
-    }
-}
-
-#[derive(Debug)]
-pub struct StructDef {
-    unique: Unique,
-    pub name: Rc<Ident>,
-    pub fields: HashMap<Rc<Ident>, Type>,
-}
-
-impl PartialEq for StructDef {
-    fn eq(&self, other: &Self) -> bool {
-        self.unique == other.unique
-    }
-}
-
-impl StructDef {
-    pub fn new(name: Rc<Ident>, fields: HashMap<Rc<Ident>, Type>) -> Self {
-        StructDef {
-            name,
-            fields,
-            unique: Unique::new(),
-        }
-    }
-}
-
-#[derive(Debug,Clone)]
-pub struct Type {
-    pub data: TypeData,
-    unique: Unique,
-}
-
-impl PartialEq for Type {
-    fn eq(&self, other: &Self) -> bool {
-        use TypeData::*;
-        match (&self.data, &other.data) {
-            //most types have their unique mark them
-            //for composite types we need to do explicit internal checks
-            //note:
-            //   while interfaces may co implement (iter implemented by array)
-            //   this sort of check is not an equality check and is handled else where
-            (Checked(c1), Checked(c2)) => c1 == c2,
-            (Iter(i1), Iter(i2)) => i1 == i2,
-            (Array(a1), Array(a2)) => a1 == a2,
-            (Union(u1), Union(u2)) => {
-                u1.len() == u2.len() && (*u1).iter().zip((*u2).iter()).all(|(a, b)| a == b)
-            }
-
-            _ => self.unique == other.unique,
-        }
-    }
-}
-
-impl Type {
-    ///Creates the type of type ie type(type)
-    pub fn type_type() -> Self {
-        Type {
-            data: TypeData::Type,
-            unique: Unique(7),
-        }
-    }
-
-    ///Creates the type(pattern)
-    pub fn type_pattern() -> Self {
-        Type {
-            data: TypeData::Pattern,
-            unique: Unique(8),
-        }
-    }
-
-    ///Creates the type(interface)
-    pub fn type_interface() -> Self {
-        Type {
-            data: TypeData::AbsInter,
-            unique: Unique(9),
-        }
-    }
-
-    ///Creates the type(struct)
-    pub fn type_struct() -> Self {
-        Type {
-            data: TypeData::AbsStruct,
-            unique: Unique(10),
-        }
-    }
-
-    /// Constructs a new `Iter` type with the given inner type.
-    pub fn iter(inner: Rc<Type>) -> Self {
-        Type {
-            data: TypeData::Iter(inner),
-            unique: Unique::new(),
-        }
-    }
-
-    /// Constructs a new `Checked` type with the given inner type.
-    pub fn checked(inner: Rc<Type>) -> Self {
-        Type {
-            data: TypeData::Checked(inner),
-            unique: Unique::new(),
-        }
-    }
-
-    /// Constructs a new `Array` type with the given inner type.
-    pub fn array(inner: Rc<Type>) -> Self {
-        Type {
-            data: TypeData::Array(inner),
-            unique: Unique::new(),
-        }
-    }
-
-    /// Constructs a new `Alias` type with the given alias target.
-    pub fn alias(target: Rc<Type>) -> Self {
-        Type {
-            data: TypeData::Alias(target),
-            unique: Unique::new(),
-        }
-    }
-
-    /// Constructs a new `Union` type with the given variants.
-    pub fn union(variants: Rc<[Type]>) -> Self {
-        Type {
-            data: TypeData::Union(variants),
-            unique: Unique::new(),
-        }
-    }
-
-    /// Constructs a new `Interface` type from an `Rc<Interface>`.
-    pub fn interface(interface: Rc<Interface>) -> Self {
-        Type::from(interface)
-    }
-
-    /// Constructs a new `Struct` type from an `Rc<StructDef>`.
-    pub fn structure(struct_def: Rc<StructDef>) -> Self {
-        Type::from(struct_def)
-    }
-}
-
-///for types like structs and unions that need additional relvent data we hold it here
-#[derive(Debug, Clone)]
-pub enum TypeData {
-    Unit,
-    Int,
-    Code(CodeType),
-    Pattern,
-    AbsInter,
-    AbsStruct,
-    Type,
-
-    Alias(Rc<Type>),
-    Union(Rc<[Type]>),
-
-    Checked(Rc<Type>),
-    Iter(Rc<Type>),
-    Array(Rc<Type>),
-
-    Interface(Rc<Interface>),
-    Struct(Rc<StructDef>),
-}
-
-impl From<Rc<Interface>> for Type {
-    fn from(x: Rc<Interface>) -> Self {
-        Type {
-            unique: Unique(x.unique.0),
-            data: TypeData::Interface(x),
-        }
-    }
-}
-
-impl From<Rc<StructDef>> for Type {
-    fn from(x: Rc<StructDef>) -> Self {
-        Type {
-            unique: Unique(x.unique.0),
-            data: TypeData::Struct(x),
-        }
-    }
-}
-
-impl From<()> for Type {
-    fn from(_: ()) -> Self {
-        Type {
-            data: TypeData::Unit,
-            unique: Unique(5),
-        }
-    }
-}
-
-impl From<i64> for Type {
-    fn from(_: i64) -> Self {
-        Type {
-            data: TypeData::Int,
-            unique: Unique(6),
-        }
-    }
-}
-
-impl From<CodeType> for Type {
-    fn from(code: CodeType) -> Self {
-        use CodeType::*;
-        let idx = match code {
-            TokenStream => 0,
-            ParenExp => 1,
-            Word => 2,
-            Literal => 3,
-            OpChar => 4,
-        };
-        Type {
-            data: TypeData::Code(code),
-            unique: Unique(idx),
-        }
-    }
-}
-
-#[test]
-fn equality() {
-    use proc_macro2::Span;
-
-    let a: Type = (0).into();
-    let b: Type = (8).into();
-    assert_eq!(a, b);
-
-    let ra: Rc<Type> = Rc::new(().into());
-    let rb: Rc<Type> = Rc::new(().into());
-    assert_eq!(ra, rb);
-    assert_eq!(Type::checked(ra.clone()), Type::checked(rb.clone()));
-
-    let s = Rc::new(StructDef::new(
-        Ident::new("name", Span::call_site()).into(),
-        HashMap::new(),
-    ));
-    let a: Type = s.clone().into();
-    let b: Type = s.into();
-    assert_eq!(a, b);
-
-    assert!(a != *rb);
-    assert!(*ra != b);
-
-    assert_eq!(Type::type_type(), Type::type_type());
-    assert_eq!(Type::type_struct(), Type::type_struct());
-    assert!(Type::type_interface() != Type::type_pattern());
-}
-
-#[test]
-fn weird_toks() {
-    let _: syn::Token![;];
-    let _: syn::Token![/];
-    //missing syn::Token![\];
-    let _: syn::Token![*];
-    let _: syn::Token![!];
-    let _: syn::Token![$];
-}

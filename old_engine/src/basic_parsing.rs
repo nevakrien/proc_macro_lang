@@ -1,10 +1,14 @@
+
 use std::rc::Rc;
-use crate::syn::buffer::{Cursor,TokenBuffer};
-use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct};
+use crate::syn::buffer::Cursor;
+use proc_macro2::{TokenStream};
+use proc_macro2::{TokenTree,Delimiter, Group, Ident, Literal, Punct};
 
 
 #[cfg(test)]
 use syn::parse_str;
+#[cfg(test)]
+use crate::syn::buffer::TokenBuffer;
 
 
 
@@ -265,26 +269,6 @@ fn test_basic_combinators() {
 #[derive(Debug,Clone,Copy)]
 pub struct DelParser (pub Delimiter);
 
-impl DelParser{
-	pub fn get_start_del(&self) -> &str {
-		match self.0 {
-            Delimiter::Parenthesis => "(",
-            Delimiter::Bracket => "[",
-            Delimiter::Brace => "{",
-            Delimiter::None => "<empty delim (likely bug)>",
-        }
-	}
-
-	pub fn get_end_del(&self) -> &str {
-		match self.0 {
-            Delimiter::Parenthesis => ")",
-            Delimiter::Bracket => "]",
-            Delimiter::Brace => "}",
-            Delimiter::None => "<EOF>",
-        }
-	}
-}
-
 impl<'a> Combinator<'a, TokenStream> for DelParser {
     fn parse(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
@@ -292,31 +276,23 @@ impl<'a> Combinator<'a, TokenStream> for DelParser {
                 Ok((next, group.token_stream()))
             }
             None => {
-                let delimiter_name = self.get_start_del();
+                let delimiter_name = match self.0 {
+                    Delimiter::Parenthesis => "(",
+                    Delimiter::Bracket => "[",
+                    Delimiter::Brace => "{",
+                    Delimiter::None => "<empty delim (likely bug)>",
+                };
                 Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
             }
         }
     }
 }
 
-#[derive(Clone)]
-pub struct DelCombParser<T> (pub DelParser,pub Rc<dyn for<'a> Combinator<'a,T>>);
-impl<'a, T> Combinator<'a, T> for DelCombParser<T> {
-	fn parse(&self, input: syn::buffer::Cursor<'a>) 
-	-> Result<(syn::buffer::Cursor<'a>, T), syn::Error> {
-		let (cursor,inner) = self.0.parse(input)?;
-		let buff = TokenBuffer::new2(inner);
-		let (inner,ans) = self.1.parse(buff.begin())?;
-		if !inner.eof(){
-            let delimiter_name = self.0.get_end_del();
-			return Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)));
-		}
-		Ok((cursor,ans))
-	}
-}
-
 #[test]
 fn test_delimited_sequence_combinator() {
+    use syn::buffer::TokenBuffer;
+    use proc_macro2::TokenStream;
+
     let tokens: TokenStream = "[1, 2, 3]".parse().unwrap();
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
@@ -343,36 +319,7 @@ fn test_delimited_sequence_combinator() {
             assert!(err.to_string().contains("Expected delimited group starting with '['"));
         }
     }
-
-    // Test the DelCombParser for nested delimiters (e.g., "([])")
-    let tokens: TokenStream = "([text])".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
-    let cursor = buffer.begin();
-
-    let inner_combinator = Rc::new(DelParser(Delimiter::Bracket));
-    let nested_combinator = DelCombParser(DelParser(Delimiter::Parenthesis), inner_combinator);
-
-    match nested_combinator.parse(cursor) {
-        Ok((next, token_stream)) => {
-            assert_eq!(token_stream.to_string(), "text");
-            assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
-        }
-        Err(err) => panic!("Nested DelimitedSequence failed: {}", err),
-    }
-
-    // Test DelCombParser failure with mismatched delimiters (e.g., "{[]}")
-    let tokens: TokenStream = "{[]}".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
-    let cursor = buffer.begin();
-
-    match nested_combinator.parse(cursor) {
-        Ok(_) => panic!("Expected Nested DelimitedSequence to fail, but it succeeded"),
-        Err(err) => {
-            assert!(err.to_string().contains("Expected delimited group starting with '('"));
-        }
-    }
 }
-
 
 pub enum PreOp{
 	Many0,
