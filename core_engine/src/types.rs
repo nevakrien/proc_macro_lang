@@ -59,7 +59,7 @@ impl Default for Unique {
 #[derive(Debug,Clone, PartialEq, Eq)]
 pub enum BasicType {
     Tree,//token tree
-    Number,
+    Int,
     None,
 
     Literal,
@@ -104,7 +104,7 @@ pub enum ObjData{
 #[derive(Debug,Clone)]
 pub enum BasicData {
     Tree(TokenTree),//token tree
-    Number(i64),
+    Int(i64),
     None,
 
     Literal(Literal),
@@ -135,7 +135,7 @@ impl_from_for_basicdata! {
     Ident => BasicData::Word,
     Punct => BasicData::Punc,
     Group => BasicData::Group,
-    i64 => BasicData::Number,
+    i64 => BasicData::Int,
 }
 
 impl From<()> for ObjData {

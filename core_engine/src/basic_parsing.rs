@@ -83,6 +83,24 @@ fn parse_any(input: Cursor) -> Result<(Cursor, TokenTree), syn::Error> {
     }
 }
 
+fn parse_int(input: Cursor) -> Result<(Cursor, i64), syn::Error> {
+    match input.token_tree() {
+        Some((proc_macro2::TokenTree::Literal(lit), next)) => {
+            lit.to_string()
+                .parse::<i64>()
+                .map(|value| (next, value))
+                .map_err(|e| syn::Error::new(lit.span(), format!("Failed to parse integer: {}", e)))
+        }
+        Some((other, _)) => Err(syn::Error::new(
+            other.span(),
+            "Expected an integer literal, but found something else",
+        )),
+        None => Err(syn::Error::new(
+            input.span(),
+            "Unexpected EOF while expecting an integer literal",
+        )),
+    }
+}
 
 
 macro_rules! define_parser {
@@ -112,6 +130,7 @@ define_parser!(PuncParser, parse_punc, Punc);
 define_parser!(GroupParser, parse_group, Group);
 define_parser!(AnyParser, parse_any, Tree);
 define_parser!(EndParser, parse_empty, None);
+define_parser!(IntParser, parse_int, Int);
 
 #[test]
 fn test_dumby_dyn_structs(){
@@ -191,6 +210,33 @@ fn test_basic_combinators() {
         Err(err) => panic!("Expected success, but got error: {}", err),
     }
 }
+
+#[test]
+    fn test_parse_int() {
+        let tokens: TokenStream = "42 invalid_int".parse().unwrap();
+        let buffer = TokenBuffer::new2(tokens);
+        let mut cursor = buffer.begin();
+
+        // Test parse_int success
+        match parse_int(cursor) {
+            Ok((next, value)) => {
+                assert_eq!(value, 42);
+                cursor = next;
+            }
+            Err(err) => panic!("parse_int failed: {}", err),
+        }
+
+        // Test parse_int failure with non-integer literal
+        match parse_int(cursor) {
+            Ok((_, value)) => panic!(
+                "Expected parse_int to fail, but it succeeded with {:?}",
+                value
+            ),
+            Err(err) => {
+                assert!(err.to_string().contains("Expected an integer"));
+            }
+        }
+    }
 
 #[derive(Debug,Clone,Copy)]
 pub struct DelTokenParser (pub Delimiter);
