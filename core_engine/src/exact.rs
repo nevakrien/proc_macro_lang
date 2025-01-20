@@ -1,19 +1,39 @@
 
 use proc_macro2::{TokenStream,TokenTree,Delimiter};
+use syn::buffer::{Cursor,TokenBuffer};
+
 use std::rc::Rc;
 use std::fmt;
 use crate::basic_parsing::Combinator;
-use crate::types::{Types,Object};
-use syn::buffer::TokenBuffer;
-use syn::buffer::Cursor;
+use crate::types::{BasicType,Object};
+use crate::types::{ObjectParser,Type};
+
+
+#[derive(Debug, Clone)]
+pub struct MatchParser(pub RcTokenBuffer);
+impl Combinator<Object> for MatchParser {
+
+    fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
+    -> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> 
+    {   
+        let mut v = Vec::with_capacity(3);
+        let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
+        Ok((cursor,Object::new(v,BasicType::Tokens.into())))
+    }
+}
+
+impl ObjectParser for MatchParser{
+
+fn type_info(&self) ->Type { BasicType::Tokens.into()}
+}
 
 
 #[derive(Clone)]
 pub struct RcTokenBuffer(pub Rc<TokenBuffer>);
 impl RcTokenBuffer{
-	pub fn begin(&self) -> Cursor{
-		self.0.begin()
-	}
+    pub fn begin(&self) -> Cursor{
+        self.0.begin()
+    }
 }
 
 impl fmt::Debug for RcTokenBuffer {
@@ -50,7 +70,7 @@ impl Default for RcTokenBuffer{
 
 
 #[derive(Clone,Copy,Debug)]
-pub enum SpotType{
+enum SpotType{
 	Regular,
 	End(Delimiter),
 	Start(Delimiter)
@@ -69,7 +89,7 @@ impl SpotType{
 }
 
 #[derive(Clone,Copy)]
-pub struct CodeSpot<'a>{
+struct CodeSpot<'a>{
 	cursor: Cursor<'a>,
 	spot_type: SpotType,
 }
@@ -95,12 +115,14 @@ impl std::fmt::Display for CodeSpot<'_> {
     }
 }
 
+//originaly was an errorreturn type now its just a way to make a syn error
 #[derive(Clone,Copy)]
 struct ExactMatchError<'a,'b> {
     expected: CodeSpot<'b>,
     actual: CodeSpot<'a>,
 }
 
+#[allow(clippy::from_over_into)]
 impl Into<syn::Error> for ExactMatchError<'_, '_> {
     fn into(self) -> syn::Error {
         syn::Error::new(self.actual.cursor.span(), format!(
@@ -142,7 +164,7 @@ macro_rules! return_match_err {
 }
 
 
-fn parse_exact_match<'a,'b>(actual: Cursor<'a>,expected:Cursor<'b>,del:Delimiter,mut acc:Option<&mut Vec<TokenTree>>) 
+fn parse_exact_match<'a>(actual: Cursor<'a>,expected:Cursor,del:Delimiter,mut acc:Option<&mut Vec<TokenTree>>) 
 -> Result<Cursor<'a>, syn::Error>{
 	let (e_tree,expected) = match expected.token_tree() {
 		Some(pair) => pair,
@@ -171,7 +193,10 @@ fn parse_exact_match<'a,'b>(actual: Cursor<'a>,expected:Cursor<'b>,del:Delimiter
 			let buff_e = TokenBuffer::new2(e.stream());
 			//we dont need the output if they match since its to an internal buffer
 			parse_exact_match(buff_a.begin(),buff_e.begin(),a.delimiter(),None)?;
-			acc.as_mut().map(|v| v.push(TokenTree::Group(a)));
+			
+            if let Some(v) = acc.as_mut(){
+                v.push(TokenTree::Group(a))
+            };
 			true
 		},
 	    _ => return_match_err!(expected,actual,del),
@@ -180,26 +205,13 @@ fn parse_exact_match<'a,'b>(actual: Cursor<'a>,expected:Cursor<'b>,del:Delimiter
 	if !matches {
 		return_match_err!(expected,actual,del);
 	} else {
-
-		return parse_exact_match(actual,expected,del,acc)
-	}
-}
-
-#[derive(Debug, Clone)]
-pub struct MatchParser(pub RcTokenBuffer);
-impl Combinator<Object> for MatchParser {
-
-	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
-	-> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> 
-	{ 	
-		let mut v = Vec::with_capacity(3);
-		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
-		Ok((cursor,Object::new(v,Types::Tokens.into())))
+		parse_exact_match(actual,expected,del,acc)
 	}
 }
 
 
-// #[derive(Debug, Clone)]
+
+#[repr(transparent)]
 pub struct ExactTokens(pub TokenBuffer);
 impl Combinator<Vec<TokenTree>> for ExactTokens {
 

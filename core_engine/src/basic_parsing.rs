@@ -1,3 +1,6 @@
+#![allow(clippy::from_over_into)]
+
+use crate::types::{Type,Object,ObjectParser};
 use std::rc::Rc;
 use crate::syn::buffer::{Cursor,TokenBuffer};
 use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct};
@@ -7,38 +10,33 @@ use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct}
 use syn::parse_str;
 
 
-
 pub trait Combinator<T, E = syn::Error>
 where
     E: std::error::Error,
 {
     fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+
 }
 
-pub trait MutCombinator<T, E = syn::Error>
-where
-    E: std::error::Error,
-{
-    fn parse_mut<'a>(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+pub trait CombinatorUtils<T, E = syn::Error>{
+	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>,  U), E>;
 }
 
-// Automatically implement MutCombinator for all Combinators
-impl<T, E, C> MutCombinator< T, E> for C
-where
-    C: Combinator<T, E>,
-    E: std::error::Error,
-{
-    fn parse_mut<'a>(&mut self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E> {
-        // Delegate to the immutable version of parse
-        Combinator::parse(self, input)
+impl<T, E,C > CombinatorUtils<T,E> for C 
+where C : Combinator<T,E>,
+E: std::error::Error, {
+	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>,  U), E>{
+    	let (cursor,ans) = self.parse(input)?;
+    	Ok((cursor,ans.into()))
     }
 }
+    
 
 pub trait BasicCombinator<E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), E>
+    fn parse(input: Cursor) -> Result<(Cursor, Self), E>
     where
         Self: Sized;
 }
@@ -48,7 +46,7 @@ pub struct TokenLiteral(pub TokenStream);
 
 impl BasicCombinator< syn::Error> for TokenLiteral {
     #[inline]
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, TokenLiteral), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, TokenLiteral), syn::Error> {
         if let Some((ans,_, next)) = input.group(proc_macro2::Delimiter::Bracket) {
             Ok((next, TokenLiteral(ans.token_stream())))
         } else {
@@ -83,7 +81,7 @@ pub enum TerminalPatern {
 }
 
 impl BasicCombinator<syn::Error> for TerminalPatern {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, TerminalPatern), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, TerminalPatern), syn::Error> {
         static ERROR_MESSAGE: &str = "expected one of [tokens] 'any 'group 'literal 'word 'punc";
 
         // Attempt to parse exact tokens first
@@ -136,7 +134,7 @@ fn match_terminals() {
 pub struct LiteralCombinator(pub Literal);
 
 impl BasicCombinator for LiteralCombinator {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Literal(lit), next)) => Ok((next, LiteralCombinator(lit))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected a literal (number or string)")),
@@ -149,7 +147,7 @@ impl BasicCombinator for LiteralCombinator {
 pub struct WordCombinator(pub Ident);
 
 impl BasicCombinator for WordCombinator {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Ident(ident), next)) => Ok((next, WordCombinator(ident))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected an identifier")),
@@ -162,7 +160,7 @@ impl BasicCombinator for WordCombinator {
 pub struct PuncCombinator(pub Punct);
 
 impl BasicCombinator for PuncCombinator {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Punct(punct), next)) => Ok((next, PuncCombinator(punct))),
             Some((other, _)) => Err(syn::Error::new(other.span(), "Expected one of +!#?.'& etc")),
@@ -175,7 +173,7 @@ impl BasicCombinator for PuncCombinator {
 pub struct GroupCombinator(pub Group);
 
 impl BasicCombinator for GroupCombinator {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
         match input.token_tree() {
             Some((TokenTree::Group(group), next)) => {
                 Ok((next, GroupCombinator(group)))
@@ -190,7 +188,7 @@ impl BasicCombinator for GroupCombinator {
 pub struct AnyCombinator(pub TokenTree);
 
 impl BasicCombinator for AnyCombinator {
-    fn parse<'a>(input: Cursor<'a>) -> Result<(Cursor<'a>, Self), syn::Error> {
+    fn parse(input: Cursor) -> Result<(Cursor, Self), syn::Error> {
         match input.token_tree() {
             Some((tree, next)) => {
                 Ok((next, AnyCombinator(tree)))
@@ -263,9 +261,9 @@ fn test_basic_combinators() {
 }
 
 #[derive(Debug,Clone,Copy)]
-pub struct DelParser (pub Delimiter);
+pub struct DelTokenParser (pub Delimiter);
 
-impl DelParser{
+impl DelTokenParser{
 	pub fn get_start_del(&self) -> &str {
 		match self.0 {
             Delimiter::Parenthesis => "(",
@@ -285,7 +283,7 @@ impl DelParser{
 	}
 }
 
-impl Combinator<TokenStream> for DelParser {
+impl Combinator<TokenStream> for DelTokenParser {
     fn parse<'a>(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
             Some((group, _, next)) => {
@@ -299,21 +297,61 @@ impl Combinator<TokenStream> for DelParser {
     }
 }
 
+fn parse_delimited<'a, T>(
+    input: Cursor<'a>,
+    del_token_parser: DelTokenParser,
+    parse_inner: impl for<'b> FnOnce(Cursor<'b>) -> Result<(Cursor<'b>, T), syn::Error>,
+) -> Result<(Cursor<'a>, T), syn::Error> {
+    let (cursor, inner) = del_token_parser.parse(input)?;
+    let buff = TokenBuffer::new2(inner);
+
+    let (inner_cursor, result) = parse_inner(buff.begin())?;
+
+    if !inner_cursor.eof() {
+        let delimiter_name = del_token_parser.get_end_del();
+        return Err(syn::Error::new(
+            input.span(),
+            format!("Expected delimited group starting with '{}'", delimiter_name),
+        ));
+    }
+
+    Ok((cursor, result))
+}
+
+/// Generic parser for delimited groups with typed output.
 #[derive(Clone)]
-pub struct DelCombParser<T> (pub DelParser,pub Rc<dyn Combinator<T>>);
-impl< T> Combinator< T> for DelCombParser<T> {
-	fn parse<'a>(&self, input: syn::buffer::Cursor<'a>) 
-	-> Result<(syn::buffer::Cursor<'a>, T), syn::Error> {
-		let (cursor,inner) = self.0.parse(input)?;
-		let buff = TokenBuffer::new2(inner);
-		let (inner,ans) = self.1.parse(buff.begin())?;
-		if !inner.eof(){
-            let delimiter_name = self.0.get_end_del();
-			return Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)));
-		}
-		Ok((cursor,ans))
+pub struct DelCombParser<T>(pub DelTokenParser, pub Rc<dyn Combinator<T>>);
+
+impl<T> Combinator<T> for DelCombParser<T> {
+    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), syn::Error> {
+        // Pass the inner parser as a closure
+        parse_delimited(input,self.0, |inner_input| self.1.parse(inner_input))
+    }
+}
+
+/// Generic object parser for delimited groups.
+#[derive(Debug,Clone)]
+pub struct DelParser(pub DelTokenParser, pub Rc<dyn ObjectParser>);
+
+impl Combinator<Object> for DelParser {
+    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+        // Pass the inner parser as a closure
+        parse_delimited(input,self.0, |inner_input| self.1.parse(inner_input))
+    }
+}
+
+impl ObjectParser for DelParser{
+fn type_info(&self) -> Type { self.1.type_info()}
+}
+
+impl DelParser{
+	pub fn new(del:Delimiter,parser:Rc<dyn ObjectParser>) -> Self{
+		DelParser(DelTokenParser(del),parser)
 	}
 }
+
+
+// pub struct DelObjectParser()
 
 #[test]
 fn test_delimited_sequence_combinator() {
@@ -321,7 +359,7 @@ fn test_delimited_sequence_combinator() {
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
 
-    let combinator = DelParser(Delimiter::Bracket);
+    let combinator = DelTokenParser(Delimiter::Bracket);
 
     // Test parsing a delimited sequence
     match combinator.parse(cursor) {
@@ -349,8 +387,8 @@ fn test_delimited_sequence_combinator() {
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
 
-    let inner_combinator = Rc::new(DelParser(Delimiter::Bracket));
-    let nested_combinator = DelCombParser(DelParser(Delimiter::Parenthesis), inner_combinator);
+    let inner_combinator = Rc::new(DelTokenParser(Delimiter::Bracket));
+    let nested_combinator = DelCombParser(DelTokenParser(Delimiter::Parenthesis), inner_combinator);
 
     match nested_combinator.parse(cursor) {
         Ok((next, token_stream)) => {
