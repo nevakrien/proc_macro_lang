@@ -51,11 +51,12 @@ impl Default for Unique {
 pub enum BasicType {
     Tree,//token tree
     Number,
+    None,
 
     Literal,
     Word,
     Punc,
-    Group
+    Group,
     /*might want:
     	Token
     	...

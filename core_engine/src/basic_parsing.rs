@@ -64,6 +64,15 @@ fn parse_group(input: Cursor) -> Result<(Cursor, Group), syn::Error> {
     }
 }
 
+fn parse_empty(input: Cursor) -> Result<(Cursor,()), syn::Error> {
+    match input.token_tree() {
+        None => Ok((input,())), // No more tokens, end of block reached
+        Some((unexpected, _)) => Err(syn::Error::new(
+            unexpected.span(),
+            "Expected the end of the block, but found unexpected token",
+        )),
+    }
+}
 
 
 fn parse_any(input: Cursor) -> Result<(Cursor, TokenTree), syn::Error> {
@@ -75,6 +84,8 @@ fn parse_any(input: Cursor) -> Result<(Cursor, TokenTree), syn::Error> {
         None => Err(syn::Error::new(proc_macro2::Span::call_site(), "Unexpected EOF")),
     }
 }
+
+
 
 macro_rules! define_parser {
     ($name:ident, $parse_fn:ident, $basic_type:expr) => {
@@ -102,10 +113,12 @@ define_parser!(WordParser, parse_word, Word);
 define_parser!(PuncParser, parse_punc, Punc);
 define_parser!(GroupParser, parse_group, Group);
 define_parser!(AnyParser, parse_any, Tree);
+define_parser!(EndParser, parse_empty, None);
 
 #[test]
 fn test_dumby_dyn_structs(){
-	let _any :Rc<dyn ObjectParser> = Rc::new(AnyParser);
+	let any :Rc<dyn ObjectParser> = Rc::new(AnyParser);
+	let _delim = DelParser::new(Delimiter::Bracket,any); 
 }
 
 
@@ -163,10 +176,21 @@ fn test_basic_combinators() {
 
     // Move the cursor forward to ensure trailing data works
     match parse_any(cursor) {
-        Ok((_, tree)) => {
+        Ok((next, tree)) => {
             assert_eq!(tree.to_string(), "invalid");
+            cursor = next;
+
+
         }
         Err(err) => panic!("WordCombinator failed on trailing data: {}", err),
+    }
+
+    //empty
+    match parse_empty(cursor) {
+        Ok(_) => {
+            // Successfully detected the end of block
+        }
+        Err(err) => panic!("Expected success, but got error: {}", err),
     }
 }
 
