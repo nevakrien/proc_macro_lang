@@ -6,5 +6,6 @@ edition = "2021"
 [dependencies]
 # auto_new = "1.0.0"
 proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
+# quote = "1.0.38"
 syn = {version="2.0.96",features=[]}
 # synom = "0.11.3"

@@ -1,3 +1,4 @@
+use crate::types::BasicType;
 use crate::basic_parsing::Combinator;
 use crate::types::{Object,Type};
 use crate::types::ObjectParser;
@@ -77,9 +78,42 @@ impl ObjectParser for OneOf{
 	fn type_info(&self) -> Type {self.1.clone()}
 }
 
+#[derive(Debug)]
+pub struct Recognize(pub Box<[Rc<dyn ObjectParser>]>);
+
+impl Combinator<Object> for Recognize{
+	fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+		let mut cursor = input;
+		for parser in &self.0 {
+			let (new_cursor,_obj) = parser.parse(cursor)?;
+			cursor = new_cursor;
+
+		}
+
+		let mut cursor2 = input;
+		let mut ans = Vec::with_capacity(self.0.len());
+		while cursor2!=cursor{
+			let (tree,new) = cursor2.token_tree().unwrap();
+			ans.push(tree);
+			cursor2=new;
+		}
+		
+		Ok((cursor,Object::new(ans,self.type_info())))
+	}
+}
+
+impl ObjectParser for Recognize{
+	fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Tree.into()))}
+}
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+	
+	use proc_macro2::TokenStream;
+	use crate::basic_parsing::PuncParser;
+	use crate::basic_parsing::LiteralParser;
+	use crate::basic_parsing::WordParser;
+use super::*;
     use crate::exact::{MatchParser, RcTokenBuffer};
     use syn::buffer::{Cursor, TokenBuffer};
 
@@ -155,5 +189,83 @@ mod tests {
 	    // Should error as no parser matches
 	    assert!(result.is_err());
 	}
+
+	#[test]
+	fn test_recognize_combination() {
+	    // Create Recognize combinator with Literal, Word, and Punct parsers
+	    let recognize = Recognize(Box::new([
+	        Rc::new(LiteralParser) as Rc<dyn ObjectParser>,
+	        Rc::new(WordParser),
+	        Rc::new(PuncParser),
+	    ]));
+
+	    // Input token stream: 42 foo !
+	    let token_stream: TokenStream = syn::parse_quote! { 42 foo ! };
+	    let token_buffer = Rc::new(TokenBuffer::new2(token_stream));
+	    let cursor = token_buffer.begin();
+
+	    // Parse the token stream using Recognize
+	    let (remaining_cursor, object) = recognize
+	        .parse(cursor)
+	        .unwrap(); // Unwrap here for better diagnostics in case of failure
+
+	    // Ensure the remaining cursor is at the end
+	    assert!(
+	        remaining_cursor.eof(),
+	        "Expected remaining cursor to be at the end, but found more tokens."
+	    );
+
+	    // Downcast the Object's data to Vec<TokenTree>
+	    let matched_tokens: Vec<proc_macro2::TokenTree> = object
+	        .data
+	        .downcast_ref::<Vec<proc_macro2::TokenTree>>()
+	        .unwrap()
+	        .clone(); // Unwrap here for better diagnostics
+
+	    // Verify the tokens
+	    assert_eq!(
+	        matched_tokens.len(),
+	        3,
+	        "Expected 3 matched tokens, but found {}",
+	        matched_tokens.len()
+	    );
+	    assert!(
+	        matches!(matched_tokens[0], proc_macro2::TokenTree::Literal(_)),
+	        "Expected first token to be a Literal, but found: {:?}",
+	        matched_tokens[0]
+	    );
+	    assert!(
+	        matches!(&matched_tokens[1], proc_macro2::TokenTree::Ident(ident) if ident == "foo"),
+	        "Expected second token to be Ident(\"foo\"), but found: {:?}",
+	        matched_tokens[1]
+	    );
+	    assert!(
+	        matches!(&matched_tokens[2], proc_macro2::TokenTree::Punct(punct) if punct.as_char() == '!'),
+	        "Expected third token to be Punct('!'), but found: {:?}",
+	        matched_tokens[2]
+	    );
+	}
+
+
+    #[test]
+    fn test_recognize_fail() {
+        // Create Recognize combinator with Literal, Word, and Punct parsers
+        let recognize = Recognize(Box::new([
+            Rc::new(LiteralParser) as Rc<dyn ObjectParser>,
+            Rc::new(WordParser),
+            Rc::new(PuncParser),
+        ]));
+
+        // Input token stream: 42 !
+        let token_stream: TokenStream = syn::parse_quote! { 42 ! };
+        let token_buffer = Rc::new(TokenBuffer::new2(token_stream));
+        let cursor = token_buffer.begin();
+
+        // Parse the token stream using Recognize
+        let result = recognize.parse(cursor);
+
+        // Expect an error because the input doesn't match the sequence
+        assert!(result.is_err());
+    }
 
 }
