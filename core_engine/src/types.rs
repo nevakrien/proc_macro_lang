@@ -215,15 +215,18 @@ where
 }
 
 #[derive(Debug,Clone)]
-pub struct StructParser(pub Box<[(Ident,Rc<dyn ObjectParser>)]>,pub Rc<StructTypes>);
+pub struct StructParser(pub Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>,pub Rc<StructTypes>);
 
 impl StructParser{
-	pub fn new(fields:Box<[(Ident,Rc<dyn ObjectParser>)]>) -> Result<Self,syn::Error>{
+	pub fn new(fields:Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>) -> Result<Self,syn::Error>{
 		let mut types = Rc::new(StructTypes::with_capacity(fields.len()));
 		let r = Rc::get_mut(&mut types).unwrap();
 		let mut error_map :HashMap<Ident,Vec<Ident>> = HashMap::new();
 
-		for (ident,parser) in &fields {
+		for (ident,parser) in fields.iter()
+		.filter(|(i,_)| !i.is_none())
+		.map(|(i,parser)| (i.as_ref().unwrap(),parser)) 
+		{
 			match r.entry(ident.clone()) {
 				Entry::Vacant(spot) => {spot.insert(parser.type_info());},
 			    Entry::Occupied(spot) => {
@@ -258,10 +261,12 @@ impl StructParser{
 impl Combinator<Object> for StructParser{
 	fn parse<'a>(&self, mut input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
-		for (ident,parser) in &self.0 {
+		for (opt,parser) in &self.0 {
 			let (new_cursor,obj) = parser.parse(input)?;
 			input = new_cursor;
-			data.insert(ident.clone(),obj);
+			if let Some(ident)=opt{
+				data.insert(ident.clone(),obj);
+			}
 
 		}
 		Ok((input,Object::new(data,self.type_info())))
@@ -327,6 +332,7 @@ use super::*;
 	    let fields = Box::new([
 	        (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
 	        (parse_quote! { field2 }, Rc::new(WordParser)),
+	        (None, Rc::new(WordParser)),
 	        (parse_quote! { field3 }, Rc::new(PuncParser)),
 	    ]);
 
@@ -334,7 +340,7 @@ use super::*;
 	    let struct_parser = StructParser::new(fields).unwrap();
 
 	    // Input token stream: 42 foo !
-	    let token_stream: TokenStream = syn::parse_quote! { 42 foo ! };
+	    let token_stream: TokenStream = syn::parse_quote! { 42 foo bar! };
 	    let token_buffer = TokenBuffer::new2(token_stream);
 	    let cursor = token_buffer.begin();
 

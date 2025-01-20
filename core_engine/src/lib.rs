@@ -6,3 +6,4 @@ pub mod basic_parsing;
 pub mod exact;
 pub mod types;
 pub mod multi;
+pub use types::{Object,ObjectParser};
