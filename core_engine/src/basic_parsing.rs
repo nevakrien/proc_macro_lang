@@ -1,5 +1,3 @@
-#![allow(clippy::from_over_into)]
-
 use crate::types::{Type,Object,ObjectParser};
 use crate::types::BasicType;
 
