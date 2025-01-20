@@ -49,7 +49,7 @@ impl Default for Unique {
 
 #[derive(Debug,Clone, PartialEq, Eq)]
 pub enum BasicType {
-    Tokens,
+    Token,
     Number,
     /*might want:
     	Type
