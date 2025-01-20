@@ -111,23 +111,18 @@ impl Ord for Type {
         use Type::*;
 
         match (self, other) {
-            // Compare Basic types
+            //things with id
             (Basic(a), Basic(b)) => a.cmp(b),
-
-            // Compare Arrays by their inner type
-            (Array(a), Array(b)) => a.cmp(b),
-
-            // Compare Structs
-            (Struct(a), Struct(b)) => a.cmp(b),
-
-            // Compare Aliases by their inner type and unique ID
-            (Alias(_, u1), Alias(_, u2)) => u1.cmp(u2),
-
-            // Compare Unions lexicographically
-            (Union(u1), Union(u2)) => u1.cmp(u2),
-
-            // Compare External types by their unique ID
+            (Alias(_, u1), Alias(_, u2)) => u1.cmp(u2),//aliases have unique ids
             (External(u1), External(u2)) => u1.cmp(u2),
+
+
+            //recursivly compare
+            (Array(a), Array(b)) => a.cmp(b),
+            (Struct(a), Struct(b)) => a.cmp(b),
+            (Union(u1), Union(u2)) => u1.cmp(u2),
+            
+            //this is an arbitrary choice but it is consistent
             _ => self.get_id().cmp(&other.get_id())
 
            
@@ -226,12 +221,6 @@ impl From<Vec<Object>> for ObjData {
     }
 }
 
-// impl<T, I> From<I> for ObjData where T : Into<Object>,I:Iterator<Item = T> {
-//     fn from(data: Vec<Object>) -> Self {
-//     	ObjData::Array(Rc::from(data.iter().map(|x| x.into)))
-//     }
-// }
-
 impl From<StructData> for ObjData {
     fn from(data: StructData) -> Self {
         ObjData::Struct(Rc::new(data))
@@ -284,7 +273,6 @@ impl Object {
 pub type StructData = HashMap<Ident,Object>;
 /// We hold these in ordered set to allow for good hashing
 pub type StructTypes = BTreeMap<Ident,Type>;
-pub type ArrayData = Vec<Object>;
 
 #[test]
 fn proc_macro2_equals(){
