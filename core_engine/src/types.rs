@@ -207,6 +207,8 @@ use super::*;
 	    // Retrieve the error
 	    let error = result.unwrap_err();
 
+
+	    //syn truncates error messages so we need to
 	    // Concatenate all errors into a single string
 	    let mut error_messages = String::new();
 	    for child_error in error.clone().into_iter() {
