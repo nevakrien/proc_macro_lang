@@ -87,11 +87,24 @@ pub type Source = Weak<TokenBuffer>;
 
 
 
-///this is still bugged because the pending/caching logic is not handeled well
+///parses a type based on the callers file scope.
+///
+///this function allows for recursive calling which is very powerful.
+///
+///it implements caching which will never break any valid peg parser and will never return wrong results.
+///
+///it detects all potential infinite loops by keeping track of all the pending calls.
+///
+///however it will still reject some grammers that are premisible in cfg.
+///
+///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
 #[derive(Debug,Clone)]
 pub struct DeferedParse(pub Type,pub Ident);
 impl Combinator<Object> for DeferedParse{
 	fn parse_pakerat<'a>(&self, input: Cursor<'a>, state: &mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
+		//!!!Contract we can not leave pending entries that we created in the cache
+		//we also have to respect all recursive errors in parsers we call
+
 		let byte_idx = input.span().byte_range().start;
 		let file = state.file.clone();
 
@@ -127,13 +140,16 @@ impl Combinator<Object> for DeferedParse{
 			.map(Rc::clone).collect::<Vec<Rc<dyn ObjectParser>>>()
 		};
 
-		let mut error = syn::Error::new(input.span(),format!("errored parse of type {}",self.1));
+		let mut error = syn::Error::new(input.span(),format!("errored in parse of type {}",self.1));
 		for parser in to_iter {
 			
 			match parser.parse_pakerat(input,state){
 				Err(e) => match e {
 					PakeratError::Regular(e) => {error.combine(e)},
-					PakeratError::Recursive(_) => {
+					PakeratError::Recursive(e) => {
+						error.combine(e);
+
+						//removing the pending entry as it is now wrong
 						let mut file = file.borrow_mut();
 						let info = file.type_info.get_mut(&self.0).unwrap();
 						info.cache.remove(&byte_idx);
