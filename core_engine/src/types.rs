@@ -1,4 +1,4 @@
-use crate::name_space::NameSpace;
+use crate::combinator::State;
 use std::collections::BTreeSet;
 use std::collections::BTreeMap;
 use proc_macro2::Literal;
@@ -7,7 +7,7 @@ use proc_macro2::Punct;
 use proc_macro2::TokenTree;
 use syn::buffer::Cursor;
 use std::fmt::Debug;
-use crate::basic_parsing::Combinator;
+use crate::combinator::Combinator;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::any::Any;
@@ -17,7 +17,7 @@ use proc_macro2::{Ident};
 
 
 //for aliasing we need a unique id
-#[derive(Debug,Clone, PartialEq, Eq, Hash,PartialOrd,Ord)]
+#[derive(Debug,Clone,Copy, PartialEq, Eq, Hash,PartialOrd,Ord)]
 pub struct Unique(u64);
 
 static UNIQUE_COUNTER: AtomicU64 = AtomicU64::new(0);
@@ -310,6 +310,27 @@ where
     fn type_info(&self) -> Type;
 }
 
+// #[derive(Clone)]
+// pub struct ByRef<T>(pub Rc<T>);
+// impl<T> PartialEq for ByRef<T>
+// {
+//     fn eq(&self, other: &Self) -> bool {
+//         // Compare raw pointers for equality
+//         Rc::as_ptr(&self.0) == Rc::as_ptr(&other.0)
+//     }
+// }
+
+// impl<T> Eq for ByRef<T> {}
+
+// impl<T> Hash for ByRef<T>
+// {
+//     fn hash<H: Hasher>(&self, state: &mut H) {
+//         // Hash the raw pointer
+//         Rc::as_ptr(&self.0).hash(state);
+//     }
+// }
+
+
 #[derive(Debug)]
 pub struct StructParser(pub Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>,pub Rc<StructTypes>);
 
@@ -355,10 +376,10 @@ impl StructParser{
 }
 
 impl Combinator<Object> for StructParser{
-	fn parse<'a>(&self, mut input: Cursor<'a>,name_space:&NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, mut input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
 		for (opt,parser) in &self.0 {
-			let (new_cursor,obj) = parser.parse(input,name_space)?;
+			let (new_cursor,obj) = parser.parse(input,state)?;
 			input = new_cursor;
 			if let Some(ident)=opt{
 				data.insert(ident.clone(),obj);
@@ -375,14 +396,15 @@ impl ObjectParser for StructParser{
 
 #[cfg(test)]
 mod tests {
+use crate::combinator::initialize_state;
 use crate::basic_parsing::AnyParser;
 use crate::basic_parsing::GroupParser;
 use crate::basic_parsing::PuncParser;
 use crate::basic_parsing::WordParser;
 use crate::basic_parsing::LiteralParser;
 use super::*;
-    use proc_macro2::TokenStream;
-    use syn::buffer::TokenBuffer;
+    
+    
     use syn::parse_quote;
     use std::rc::Rc;
 
@@ -424,7 +446,6 @@ use super::*;
 
 	#[test]
 	fn struct_parser_basic_parse() {
-		let name_space = NameSpace::new_global();
 
 	    // Define fields in the struct
 	    let fields = Box::new([
@@ -438,13 +459,12 @@ use super::*;
 	    let struct_parser = StructParser::new(fields).unwrap();
 
 	    // Input token stream: 42 foo !
-	    let token_stream: TokenStream = syn::parse_quote! { 42 foo bar! };
-	    let token_buffer = TokenBuffer::new2(token_stream);
+	    let (token_buffer,mut state) = initialize_state("42 foo bar!").unwrap();
 	    let cursor = token_buffer.begin();
 
 	    // Parse the token stream using StructParser
 	    let (remaining_cursor, object) = struct_parser
-	        .parse(cursor,&name_space)
+	        .parse(cursor,&mut state)
 	        .unwrap(); // Unwrap for better diagnostics
 
 	    // Ensure the remaining cursor is at the end
@@ -483,7 +503,6 @@ use super::*;
 
     #[test]
     fn struct_parser_fail_parse() {
-		let name_space = NameSpace::new_global();
 
 
         // Define fields in the struct
@@ -497,12 +516,11 @@ use super::*;
         let struct_parser = StructParser::new(fields).unwrap();
 
         // Input token stream with mismatched sequence: 42 !
-        let token_stream: TokenStream = syn::parse_quote! { 42 ! };
-        let token_buffer = TokenBuffer::new2(token_stream);
+        let (token_buffer,mut state) = initialize_state("42 !").unwrap();
         let cursor = token_buffer.begin();
 
         // Parse the token stream using StructParser
-        let result = struct_parser.parse(cursor,&name_space);
+        let result = struct_parser.parse(cursor,&mut state);
 
         // Expect an error because the input doesn't match the sequence
         assert!(result.is_err());

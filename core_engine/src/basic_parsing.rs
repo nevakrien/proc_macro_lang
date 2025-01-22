@@ -1,4 +1,8 @@
-use crate::name_space::NameSpace;
+
+use crate::combinator::{Combinator,State};
+#[cfg(test)]
+use crate::combinator::initialize_state;
+
 use crate::types::{Type,Object,ObjectParser};
 use crate::types::BasicType;
 
@@ -7,27 +11,7 @@ use crate::syn::buffer::{Cursor,TokenBuffer};
 use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct};
 
 
-pub trait Combinator<T, E = syn::Error>
-where
-    E: std::error::Error,
-{
-    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, T), E>;
 
-}
-
-pub trait CombinatorUtils<T, E = syn::Error>{
-	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>,  U), E>;
-}
-
-impl<T, E,C > CombinatorUtils<T,E> for C 
-where C : Combinator<T,E>,
-E: std::error::Error, {
-	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>,  U), E>{
-    	let (cursor,ans) = self.parse(input,name_space)?;
-    	Ok((cursor,ans.into()))
-    }
-}
-    
 
 fn parse_literal(input: Cursor) -> Result<(Cursor, Literal), syn::Error> {
     match input.token_tree() {
@@ -110,7 +94,7 @@ macro_rules! define_parser {
         pub struct $name;
 
         impl Combinator<Object> for $name {
-            fn parse<'a>(&self, input: Cursor<'a>,_name_space:&NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
+            fn parse<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
                 let (next, token) = $parse_fn(input)?;
                 Ok((next, Object::new(token,self.type_info())))
             }
@@ -263,7 +247,7 @@ impl DelTokenParser{
 }
 
 impl Combinator<TokenStream> for DelTokenParser {
-    fn parse<'a>(&self, input: Cursor<'a>,_name_space: &NameSpace) -> syn::Result<(Cursor<'a>, TokenStream)> {
+    fn parse<'a>(&self, input: Cursor<'a>,_state:&mut State) -> syn::Result<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
             Some((group, _, next)) => {
                 Ok((next, group.token_stream()))
@@ -278,14 +262,14 @@ impl Combinator<TokenStream> for DelTokenParser {
 
 fn parse_delimited<'a, T>(
     input: Cursor<'a>,
-    name_space: &NameSpace,
+    state:&mut State,
     del_token_parser: DelTokenParser,
-    parse_inner: impl for<'b> FnOnce(Cursor<'b>,&NameSpace) -> Result<(Cursor<'b>, T), syn::Error>,
+    parse_inner: impl for<'b> FnOnce(Cursor<'b>,&mut State) -> Result<(Cursor<'b>, T), syn::Error>,
 ) -> Result<(Cursor<'a>, T), syn::Error> {
-    let (cursor, inner) = del_token_parser.parse(input,name_space)?;
+    let (cursor, inner) = del_token_parser.parse(input,state)?;
     let buff = TokenBuffer::new2(inner);
 
-    let (inner_cursor, result) = parse_inner(buff.begin(),name_space)?;
+    let (inner_cursor, result) = parse_inner(buff.begin(),state)?;
 
     if !inner_cursor.eof() {
         let delimiter_name = del_token_parser.get_end_del();
@@ -303,9 +287,9 @@ fn parse_delimited<'a, T>(
 pub struct DelCombParser<T>(pub DelTokenParser, pub Rc<dyn Combinator<T>>);
 
 impl<T> Combinator<T> for DelCombParser<T> {
-    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, T), syn::Error> {
+    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, T), syn::Error> {
         // Pass the inner parser as a closure
-        parse_delimited(input,name_space,self.0, |inner_input,name_space| self.1.parse(inner_input,name_space))
+        parse_delimited(input,state,self.0, |inner_input,state| self.1.parse(inner_input,state))
     }
 }
 
@@ -314,9 +298,9 @@ impl<T> Combinator<T> for DelCombParser<T> {
 pub struct DelParser(pub DelTokenParser, pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for DelParser {
-    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
+    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
         // Pass the inner parser as a closure
-        parse_delimited(input,name_space,self.0, |inner_input,name_space| self.1.parse(inner_input,name_space))
+        parse_delimited(input,state,self.0, |inner_input,state| self.1.parse(inner_input,state))
     }
 }
 
@@ -335,15 +319,12 @@ impl DelParser{
 
 #[test]
 fn test_delimited_sequence_combinator() {
-	let name_space = NameSpace::new_global();
-    let tokens: TokenStream = "[1, 2, 3]".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
+    let (buffer,mut state) = initialize_state("[1, 2, 3]").unwrap();
     let cursor = buffer.begin();
-
     let combinator = DelTokenParser(Delimiter::Bracket);
 
     // Test parsing a delimited sequence
-    match combinator.parse(cursor,&name_space) {
+    match combinator.parse(cursor,&mut state) {
         Ok((next, token_stream)) => {
             assert_eq!(token_stream.to_string(), "1 , 2 , 3");
             assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
@@ -352,11 +333,11 @@ fn test_delimited_sequence_combinator() {
     }
 
     // Test parsing with wrong delimiter
-    let tokens: TokenStream = "(1, 2, 3)".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
+    let (buffer,mut state) = initialize_state("(1, 2, 3)").unwrap();
     let cursor = buffer.begin();
 
-    match combinator.parse(cursor,&name_space) {
+
+    match combinator.parse(cursor,&mut state) {
         Ok(_) => panic!("Expected DelimitedSequence to fail, but it succeeded"),
         Err(err) => {
             assert!(err.to_string().contains("Expected delimited group starting with '['"));
@@ -364,14 +345,13 @@ fn test_delimited_sequence_combinator() {
     }
 
     // Test the DelCombParser for nested delimiters (e.g., "([])")
-    let tokens: TokenStream = "([text])".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
+    let (buffer,mut state) = initialize_state("([text])").unwrap();
     let cursor = buffer.begin();
 
     let inner_combinator = Rc::new(DelTokenParser(Delimiter::Bracket));
     let nested_combinator = DelCombParser(DelTokenParser(Delimiter::Parenthesis), inner_combinator);
 
-    match nested_combinator.parse(cursor,&name_space) {
+    match nested_combinator.parse(cursor,&mut state) {
         Ok((next, token_stream)) => {
             assert_eq!(token_stream.to_string(), "text");
             assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
@@ -380,11 +360,11 @@ fn test_delimited_sequence_combinator() {
     }
 
     // Test DelCombParser failure with mismatched delimiters (e.g., "{[]}")
-    let tokens: TokenStream = "{[]}".parse().unwrap();
-    let buffer = TokenBuffer::new2(tokens);
+    let (buffer,mut state) = initialize_state("{[]}").unwrap();
     let cursor = buffer.begin();
 
-    match nested_combinator.parse(cursor,&name_space) {
+
+    match nested_combinator.parse(cursor,&mut state) {
         Ok(_) => panic!("Expected Nested DelimitedSequence to fail, but it succeeded"),
         Err(err) => {
             assert!(err.to_string().contains("Expected delimited group starting with '('"));

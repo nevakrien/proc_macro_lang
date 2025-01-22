@@ -1,43 +1,21 @@
 
-use crate::name_space::NameSpace;
-use proc_macro2::{TokenStream,TokenTree,Delimiter};
+#[cfg(test)]
+use crate::combinator::initialize_state;
+
+use crate::combinator::State;
+use proc_macro2::{TokenTree,Delimiter};
 use syn::buffer::{Cursor,TokenBuffer};
 
 use std::rc::Rc;
 use std::fmt;
-use crate::basic_parsing::Combinator;
+use crate::combinator::Combinator;
 use crate::types::{BasicType,Object};
 use crate::types::{ObjectParser,Type};
 
 
-#[derive(Debug, Clone)]
-pub struct MatchParser(pub RcTokenBuffer);
-impl Combinator<Object> for MatchParser {
+pub struct MatchParser(pub TokenBuffer);
 
-    fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_name_space:&NameSpace) 
-    -> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> 
-    {   
-        let mut v = Vec::with_capacity(3);
-        let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
-        Ok((cursor,Object::from_iter(v.into_iter(),self.type_info())))
-    }
-}
-
-impl ObjectParser for MatchParser{
-
-fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Tree.into()))}
-}
-
-
-#[derive(Clone)]
-pub struct RcTokenBuffer(pub Rc<TokenBuffer>);
-impl RcTokenBuffer{
-    pub fn begin(&self) -> Cursor{
-        self.0.begin()
-    }
-}
-
-impl fmt::Debug for RcTokenBuffer {
+impl fmt::Debug for MatchParser {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut tokens = Vec::new();
         let mut cursor = self.0.begin();
@@ -45,29 +23,31 @@ impl fmt::Debug for RcTokenBuffer {
             tokens.push(format!("{:?}", token));
             cursor = next;
         }
-        f.debug_struct("RcTokenBuffer")
+        f.debug_struct("MatchParser")
             .field("tokens", &tokens)
             .finish()
     }
 }
 
-impl From<std::vec::IntoIter<TokenTree>> for RcTokenBuffer {
-    fn from(iter: std::vec::IntoIter<TokenTree>) -> Self {
-        let token_buffer = TokenBuffer::new2(proc_macro2::TokenStream::from_iter(iter));
-        RcTokenBuffer(Rc::new(token_buffer))
+impl Combinator<Object> for MatchParser {
+    fn parse<'a>(
+        &self,
+        actual: syn::buffer::Cursor<'a>,
+        _state: &mut State,
+    ) -> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> {
+        let mut v = Vec::with_capacity(3);
+        let cursor = parse_exact_match(actual, self.0.begin(), Delimiter::None, Some(&mut v))?;
+        Ok((cursor, Object::from_iter(v.into_iter(), self.type_info())))
     }
 }
 
-impl From<TokenBuffer> for RcTokenBuffer {
-    fn from(buffer: TokenBuffer) -> Self {
-        RcTokenBuffer(Rc::new(buffer))
+impl ObjectParser for MatchParser {
+    fn type_info(&self) -> Type {
+        Type::Array(Rc::new(BasicType::Tree.into()))
     }
 }
 
-impl Default for RcTokenBuffer{
 
-	fn default() -> Self { RcTokenBuffer(Rc::new(TokenBuffer::new2(TokenStream::new()))) }
-}
 
 
 #[derive(Clone,Copy,Debug)]
@@ -216,7 +196,7 @@ fn parse_exact_match<'a>(actual: Cursor<'a>,expected:Cursor,del:Delimiter,mut ac
 pub struct ExactTokens(pub TokenBuffer);
 impl Combinator<Vec<TokenTree>> for ExactTokens {
 
-	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_name_space:&NameSpace) 
+	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_state:&mut State) 
 	-> Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(10);
@@ -255,22 +235,21 @@ impl fmt::Debug for ExactTokens {
 #[test]
 fn test_exact_tokens_combinator() {
     use proc_macro2::TokenStream;
-    let name_space = NameSpace::new_global();
     
 
     // Macro to test success
     macro_rules! test_success {
         ($expected:expr, $actual:expr) => {
-            {
+            {   
+                let (actual_buff,mut state) = initialize_state($actual).unwrap();                
+
                 let expected_stream: TokenStream = $expected.parse().unwrap();
-                let actual_stream: TokenStream = $actual.parse().unwrap();
 
                 let token_buffer = syn::buffer::TokenBuffer::new2(expected_stream);
                 let combinator = ExactTokens(token_buffer);
 
-                let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
 
-                if let Err(err) = combinator.parse(actual_buff.begin(),&name_space) {
+                if let Err(err) = combinator.parse(actual_buff.begin(),&mut state) {
                     panic!(
                         "Expected parse to succeed, but it failed:\nExpected: {:?}\nActual: {:?}\nError: {:?}",
                         $expected, $actual, err
@@ -283,15 +262,14 @@ fn test_exact_tokens_combinator() {
     // Macro to test failure
     macro_rules! test_failure {
         ($expected:expr, $actual:expr) => {
-            {
+            {   let (actual_buff,mut state) = initialize_state($actual).unwrap();
+
                 let expected_stream: TokenStream = $expected.parse().unwrap();
-                let actual_stream: TokenStream = $actual.parse().unwrap();
 
                 let token_buffer = syn::buffer::TokenBuffer::new2(expected_stream);
                 let combinator = ExactTokens(token_buffer);
 
-                let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
-                if combinator.parse(actual_buff.begin(),&name_space).is_ok() {
+                if combinator.parse(actual_buff.begin(),&mut state).is_ok() {
                     panic!(
                         "Expected parse to fail, but it succeeded:\nExpected: {:?}\nActual: {:?}",
                         $expected, $actual
