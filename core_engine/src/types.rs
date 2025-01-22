@@ -376,7 +376,7 @@ impl StructParser{
 }
 
 impl Combinator<Object> for StructParser{
-	fn parse<'a>(&self, mut input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, mut input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
 		for (opt,parser) in &self.0 {
 			let (new_cursor,obj) = parser.parse(input,state)?;

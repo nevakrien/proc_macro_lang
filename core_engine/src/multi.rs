@@ -8,8 +8,8 @@ use syn::buffer::Cursor;
 
 pub fn parse_many<'a,T,E>(
     mut input: Cursor<'a>,
-    state:&mut State,
-	parser: impl for<'b> Fn(Cursor<'b>,&mut State) -> Result<(Cursor<'b>, T), E>,
+    state:&mut State<'a>,
+	parser: impl for<'b> Fn(Cursor<'b>,&mut State<'b>) -> Result<(Cursor<'b>, T), E>,
 	ans:&mut Vec<T>
 )-> Cursor<'a>{
 	while let Ok((new_input,item)) = parser(input,state){
@@ -24,7 +24,7 @@ pub struct Many0(pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for Many0{
 
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut ans = Vec::new();
 		let cursor = parse_many(input,state,|c,n| {self.0.parse(c,n)},&mut ans);
 		Ok((cursor,Object::new(ans,self.type_info())))
@@ -40,7 +40,7 @@ impl ObjectParser for Many0{
 pub struct Many1(pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for Many1{
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let (cursor,first) = self.0.parse(input,state)?;
 		let mut ans = vec![first];
 		let cursor = parse_many(cursor,state,|c,n| {self.0.parse(c,n)},&mut ans);
@@ -65,7 +65,7 @@ impl OneOf{
 }
 
 impl Combinator<Object> for OneOf{
-	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut error = syn::Error::new(input.span(),format!("errored on {} things (OneOf):",self.0.len()));
 		for parser in &self.0 {
 			match parser.parse(input,state){
@@ -92,7 +92,7 @@ impl Maybe{
 }
 
 impl Combinator<Object> for Maybe{
-	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		match self.0.parse(input,state){
 			Ok(x) => Ok(x),
 			Err(_e) => Ok((input,Object::none()))
@@ -108,7 +108,7 @@ impl ObjectParser for Maybe{
 pub struct Recognize(pub Box<[Rc<dyn ObjectParser>]>);
 
 impl Combinator<Object> for Recognize{
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut cursor = input;
 		for parser in &self.0 {
 			let (new_cursor,_obj) = parser.parse(cursor,state)?;

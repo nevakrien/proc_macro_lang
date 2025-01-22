@@ -4,7 +4,6 @@ use std::rc::Rc;
 use proc_macro2::Ident;
 use crate::types::{StructParser};
 use syn::buffer::Cursor;
-use crate::name_space::NameSpace;
 
 pub fn parse_pattern(_input:Cursor) -> syn::Result<(Cursor,StructParser)>{
 	todo!()

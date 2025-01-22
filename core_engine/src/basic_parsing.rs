@@ -223,28 +223,27 @@ fn test_parse_int() {
     }
 }
 
-#[derive(Debug,Clone,Copy)]
-pub struct DelTokenParser (pub Delimiter);
-
-impl DelTokenParser{
-	pub fn get_start_del(&self) -> &str {
-		match self.0 {
-            Delimiter::Parenthesis => "(",
-            Delimiter::Bracket => "[",
-            Delimiter::Brace => "{",
-            Delimiter::None => "<empty delim (likely bug)>",
-        }
-	}
-
-	pub fn get_end_del(&self) -> &str {
-		match self.0 {
-            Delimiter::Parenthesis => ")",
-            Delimiter::Bracket => "]",
-            Delimiter::Brace => "}",
-            Delimiter::None => "<EOF>",
-        }
-	}
+pub fn get_start_del(del:Delimiter) -> &'static str {
+	match del {
+        Delimiter::Parenthesis => "(",
+        Delimiter::Bracket => "[",
+        Delimiter::Brace => "{",
+        Delimiter::None => "<empty delim (likely bug)>",
+    }
 }
+
+pub fn get_end_del(del:Delimiter) -> &'static str {
+	match del {
+        Delimiter::Parenthesis => ")",
+        Delimiter::Bracket => "]",
+        Delimiter::Brace => "}",
+        Delimiter::None => "<EOF>",
+    }
+}
+
+//used as a tester
+#[derive(Debug,Clone,Copy)]
+struct DelTokenParser (Delimiter);
 
 impl Combinator<TokenStream> for DelTokenParser {
     fn parse<'a>(&self, input: Cursor<'a>,_state:&mut State) -> syn::Result<(Cursor<'a>, TokenStream)> {
@@ -253,54 +252,64 @@ impl Combinator<TokenStream> for DelTokenParser {
                 Ok((next, group.token_stream()))
             }
             None => {
-                let delimiter_name = self.get_start_del();
+                let delimiter_name = get_start_del(self.0);
                 Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
             }
         }
     }
 }
 
+
+
+
 fn parse_delimited<'a, T>(
     input: Cursor<'a>,
-    state:&mut State,
-    del_token_parser: DelTokenParser,
-    parse_inner: impl for<'b> FnOnce(Cursor<'b>,&mut State) -> Result<(Cursor<'b>, T), syn::Error>,
+    state:&mut State<'a>,
+    del:Delimiter,
+    parse_inner: &(impl Combinator<T> + ?Sized),
 ) -> Result<(Cursor<'a>, T), syn::Error> {
-    let (cursor, inner) = del_token_parser.parse(input,state)?;
-    let buff = TokenBuffer::new2(inner);
+    // let (cursor, inner) = del_token_parser.parse(input,state)?;
+    // let buff = TokenBuffer::new2(inner);
 
-    let (inner_cursor, result) = parse_inner(buff.begin(),state)?;
+    let (group,next) = match input.group(del) {
+        None => {
+        	let delimiter_name = get_start_del(del);
+            return Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
+        },
+        Some((group,_,next)) => (group,next)
+    };
+
+    let (inner_cursor, result) = parse_inner.parse(group,state)?;
 
     if !inner_cursor.eof() {
-        let delimiter_name = del_token_parser.get_end_del();
+        let delimiter_name = get_end_del(del);
         return Err(syn::Error::new(
             input.span(),
             format!("Expected delimited group starting with '{}'", delimiter_name),
         ));
     }
 
-    Ok((cursor, result))
+    Ok((next, result))
 }
 
 /// Generic parser for delimited groups with typed output.
 #[derive(Clone)]
-pub struct DelCombParser<T>(pub DelTokenParser, pub Rc<dyn Combinator<T>>);
+pub struct DelCombParser<T>(pub Delimiter, pub Rc<dyn Combinator<T>>);
 
 impl<T> Combinator<T> for DelCombParser<T> {
-    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, T), syn::Error> {
+    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, T), syn::Error> {
         // Pass the inner parser as a closure
-        parse_delimited(input,state,self.0, |inner_input,state| self.1.parse(inner_input,state))
+        parse_delimited(input,state,self.0, &*self.1)
     }
 }
 
 /// Generic object parser for delimited groups.
 #[derive(Debug,Clone)]
-pub struct DelParser(pub DelTokenParser, pub Rc<dyn ObjectParser>);
+pub struct DelParser(pub Delimiter, pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for DelParser {
-    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
-        // Pass the inner parser as a closure
-        parse_delimited(input,state,self.0, |inner_input,state| self.1.parse(inner_input,state))
+    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+        parse_delimited(input,state,self.0, &*self.1)
     }
 }
 
@@ -310,12 +319,13 @@ fn type_info(&self) -> Type { self.1.type_info()}
 
 impl DelParser{
 	pub fn new(del:Delimiter,parser:Rc<dyn ObjectParser>) -> Self{
-		DelParser(DelTokenParser(del),parser)
+		DelParser(del,parser)
 	}
 }
 
 
 // pub struct DelObjectParser()
+
 
 #[test]
 fn test_delimited_sequence_combinator() {
@@ -349,7 +359,7 @@ fn test_delimited_sequence_combinator() {
     let cursor = buffer.begin();
 
     let inner_combinator = Rc::new(DelTokenParser(Delimiter::Bracket));
-    let nested_combinator = DelCombParser(DelTokenParser(Delimiter::Parenthesis), inner_combinator);
+    let nested_combinator = DelCombParser(Delimiter::Parenthesis, inner_combinator);
 
     match nested_combinator.parse(cursor,&mut state) {
         Ok((next, token_stream)) => {

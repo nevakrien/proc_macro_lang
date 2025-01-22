@@ -1,3 +1,7 @@
+use std::fmt;
+use std::cell::RefCell;
+use std::rc::Weak;
+use syn::buffer::TokenBuffer;
 use std::collections::BTreeMap;
 use crate::types::BasicType;
 use crate::types::Type;
@@ -25,48 +29,186 @@ pub type ObjectScope<'a> = Scope<'a,Object>;
 
 ///deafualt here is a place holder!!!
 #[derive(Debug,Default)]
-pub struct TypeGlobalData{
-	parsers:BTreeMap<NonNanFloat,Rc<dyn ObjectParser>>
+pub struct TypeGlobalData<'a>{
+	parsers:BTreeMap<NonNanFloat,Rc<dyn ObjectParser>>,
+	cache: HashMap<usize,CacheState<'a>>,
 }
 
+pub enum CacheState<'a>{
+	Pending,
+	Err(syn::Error),
+	Ok(Cursor<'a>,Object)
+}
+// Implement Debug for CacheState
+impl<'a> fmt::Debug for CacheState<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CacheState::Pending => write!(f, "CacheState::Pending"),
+            CacheState::Err(error) => write!(f, "CacheState::Err({:?})", error),
+            CacheState::Ok ( _,obj) => {
+                write!(f, "CacheState::Ok {{ cursor: <opaque>, obj: {:?} }}", obj)
+            }
+        }
+    }
+}
+
+///used for implementing pakerat parsing
 #[derive(Debug)]
-pub struct NameSpace<'a> {
-	types : TypeScope<'a>,
-	objects : ObjectScope<'a>,
-	type_info:HashMap<Type,TypeGlobalData>,
-}
+pub struct FileNameSpace<'a>{
+	pub type_info: HashMap<Type,TypeGlobalData<'a>>,
+	pub types : TypeScope<'static>,
+	pub objects : ObjectScope<'static>,
+} 
 
-impl NameSpace<'_>{
-	pub fn new_global() -> Self {
-		NameSpace{
-			types : TypeScope::new_global(),
-			type_info: default_type_info_map(),
-			objects : ObjectScope::new_global(),
-		}
+impl Default for FileNameSpace<'_>{
+
+fn default() -> Self { 
+	FileNameSpace{
+		type_info:default_type_info_map(),
+		types: TypeScope::new_global(),
+		objects: ObjectScope::new_global(),
 	}
 }
+}
+
+
+
+/// A cache that maps sources to file caches, with automatic cleanup of stale entries.
+#[derive(Default,Debug)]
+pub struct GlobalNameSpace<'a> {
+    cache: HashMap<*const TokenBuffer, (Weak<TokenBuffer>, Rc<RefCell<FileNameSpace<'a>>>)>,
+    counter: usize, // Tracks when to trigger cleanup
+}
+
+/// A key used by GlobalNameSpace for the purpose of retriving token buffers
+pub type Source = Weak<TokenBuffer>;
+
+
+
 
 #[derive(Debug,Clone)]
 pub struct DeferedParse(pub Type,pub Ident);
 impl Combinator<Object> for DeferedParse{
-	fn parse<'a>(&self, input: Cursor<'a>, state: &mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
-		let info = state.name_space.type_info.entry(self.0.clone()).or_default();
+	fn parse<'a>(&self, input: Cursor<'a>, state: &mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+		let byte_idx = input.span().byte_range().start;
+		let file = state.file.clone();
 
-		let mut error = syn::Error::new(input.span(),format!("errored on global parse of type {}",self.1));
+		//ref cell shananigans to get file
+		let to_iter = {
+			
+			let mut file = file.borrow_mut();
+			
 
-		for parser in info.parsers.values().rev()
-		//collect so that others may modify the type cache as they wish
-		.map(Rc::clone).collect::<Vec<Rc<dyn ObjectParser>>>() {
+			let info = file.type_info.entry(self.0.clone()).or_default();
+
+
+
+			match info.cache.entry(byte_idx) {
+			    std::collections::hash_map::Entry::Occupied(mut entry) => match entry.get() {
+			        CacheState::Ok(cursor, obj) => return Ok((*cursor, obj.clone())),
+			        CacheState::Err(error) => return Err(error.clone()),
+			        CacheState::Pending => {
+			        	//this may be inserted multiple times as we call recursivly. which is fine but anoying
+			        	let error = syn::Error::new(input.span(),format!("infinite loop while parsing type {}",self.1));
+			        	entry.insert(CacheState::Err(error.clone()));
+			        	return Err(error);
+			        },
+			    },
+			    std::collections::hash_map::Entry::Vacant(entry) => {
+			        entry.insert(CacheState::Pending);
+			    }
+			}
+
+			info.parsers.values().rev()
+			//collect so that others may modify the type cache as they wish
+			.map(Rc::clone).collect::<Vec<Rc<dyn ObjectParser>>>()
+		};
+
+		let mut error = syn::Error::new(input.span(),format!("errored parse of type {}",self.1));
+		for parser in to_iter {
 			
 			match parser.parse(input,state){
 				Err(e) => {error.combine(e)}
-				Ok(x) => {return Ok(x)},
+				Ok((cursor,obj)) => {
+					//we know the info is there so we can borrow just for this block
+					let mut file = file.borrow_mut();
+					let info = file.type_info.get_mut(&self.0).unwrap();
+					info.cache.insert(byte_idx,CacheState::Ok(cursor,obj.clone()));
+					return Ok((cursor,obj))
+					
+
+				},
 			}
 
 		}
+
+		let mut file = file.borrow_mut();
+		let info = file.type_info.get_mut(&self.0).unwrap();
+		info.cache.insert(byte_idx,CacheState::Err(error.clone()));
 		Err(error)
 	}
 }
+
+impl ObjectParser for DeferedParse{
+
+fn type_info(&self) -> Type { self.0.clone()}
+}
+
+impl<'a> GlobalNameSpace<'a> {
+    /// Creates a new empty `GlobalNameSpace`.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Retrieves an `Rc<RefCell<FileNameSpace>>`, resetting stale entries if necessary.
+    ///
+    /// Automatically calls `clean_up` when the internal counter exceeds the cache size.
+    /// 
+    /// This function is an armotized O(1) time with a potential O(n) spike for cleanups
+    pub fn get<'b>(&'b mut self, source: &Source) -> Rc<RefCell<FileNameSpace<'a>>> {
+        // Perform cleanup when counter reaches cache size (amortized O(1) cleanup)
+        if self.counter >= self.cache.len() {
+            self.clean_up();
+        }
+
+        self.get_no_cleanup(source)
+    }
+
+    /// Similar to get just without the automatic call to cleanup
+    /// 
+    /// As such using this function can cause an effective memory leak unless cleanup is called at some point
+    pub fn get_no_cleanup<'b>(&'b mut self, source: &Source) -> Rc<RefCell<FileNameSpace<'a>>> {
+        // Using the raw pointer to `TokenBuffer` as a key ensures no collisions:
+        // Since no 2 Rcs can share memory and not be the same object.
+        // Even if a `Weak<TokenBuffer>` points to a freed `Rc`, it is impossible for another `Rc`
+        // to reuse the same address while sharing the same `Weak` pointer location.
+        let key = source.as_ptr();
+
+        let entry = self.cache.entry(key).or_insert_with(|| {
+            self.counter += 1; // Increment counter on new entry
+            let cache = Rc::new(RefCell::new(FileNameSpace::default()));
+            (source.clone(), cache)
+        });
+
+        // Replace stale entries with a fresh `FileNameSpace`
+        if entry.0.upgrade().is_none() {
+            let cache = Rc::new(RefCell::new(FileNameSpace::default()));
+            entry.0 = source.clone();
+            entry.1 = cache;
+        }
+
+        entry.1.clone()
+    }
+
+    /// Removes all stale entries from the cache.
+    ///
+    /// Resets the counter to zero after cleanup.
+    pub fn clean_up(&mut self) {
+        self.counter = 0;
+        self.cache.retain(|_, (source, _)| source.upgrade().is_some());
+    }
+}
+
 
 macro_rules! insert_type_parsers {
     ($map:expr, { $($basic_type:expr => $parser:expr),* $(,)? }) => {
@@ -74,13 +216,13 @@ macro_rules! insert_type_parsers {
             {
                 let mut parsers = BTreeMap::new();
                 parsers.insert(NonNanFloat::new(1.0).unwrap(), Rc::new($parser) as Rc<dyn ObjectParser>);
-                $map.insert(Type::Basic($basic_type), TypeGlobalData { parsers });
+                $map.insert(Type::Basic($basic_type), TypeGlobalData { parsers,cache:HashMap::new() });
             }
         )*
     };
 }
 
-pub fn default_type_info_map() -> HashMap<Type, TypeGlobalData> {
+pub fn default_type_info_map() -> HashMap<Type, TypeGlobalData<'static>> {
     let mut type_info = HashMap::new();
 
     insert_type_parsers! {
@@ -112,17 +254,18 @@ macro_rules! insert_parsers {
 
 
 impl ObjectScope<'_>{
+
 	pub fn new_global()->ObjectScope<'static>{
 		let mut map :HashMap<Ident,Object>= HashMap::new();
 		
 		 insert_parsers!(map, {
-            any => AnyParser,
-            lit => LiteralParser,
-            word => WordParser,
-            punc => PuncParser,
-            group => GroupParser,
-            end => EndParser,
-            int => IntParser,
+            any_parser => AnyParser,
+            lit_parser => LiteralParser,
+            word_parser => WordParser,
+            punc_parser => PuncParser,
+            group_parser => GroupParser,
+            end_parser => EndParser,
+            int_parser => IntParser,
         });
 		
 		Scope{map,parent:None}
@@ -243,6 +386,46 @@ use super::*;
         // Assert the result is an error
         assert!(result.is_err(), "Expected error for unrecognized parser");
     }
+
+    //this test would go into an infinite loop if the detection method is broken
+    #[test]
+	fn test_deferred_infinite_parse_detection() {
+	    // Create a global namespace and initialize state
+	    let (input, mut state) = initialize_state("42").unwrap();
+
+	    // Define a DeferedParse pointing to the int type
+	    let int_type :Type = BasicType::Int.into();
+	    let deferred_parser = DeferedParse(int_type.clone(), Ident::new("int", Span::call_site()));
+
+	    // Insert the DeferedParse into the existing type info for int\
+	    {
+	    	let type_info = &mut state.file.borrow_mut().type_info;
+	    	let int_data = type_info.get_mut(&int_type).expect("Int type data should exist");
+	    	int_data.parsers.insert(NonNanFloat::new(2.0).unwrap(), Rc::new(deferred_parser));
+		}	
+	    // Test parsing a valid integer
+	    let deferred_parser = DeferedParse(int_type.clone(), Ident::new("int", Span::call_site()));
+	    let valid_result = deferred_parser.parse(input.begin(), &mut state);
+
+	    match valid_result {
+	        Ok((remaining, object)) => {
+	            if let ObjData::Basic(BasicData::Int(value)) = object.data {
+	                assert_eq!(value, 42, "Parsed integer value is incorrect");
+	            } else {
+	                panic!("Parsed object is not an integer");
+	            }
+	            assert!(remaining.eof(), "Remaining tokens after parsing");
+	        }
+	        Err(err) => panic!("Parsing valid input failed: {}", err),
+	    }
+
+	    // Test parsing invalid input (non-integer)
+	    let (invalid_input, mut state) = initialize_state("not_a_number").unwrap();
+	    let invalid_result = deferred_parser.parse(invalid_input.begin(), &mut state);
+
+	    assert!(invalid_result.is_err(), "Expected error for invalid input, but got Ok result");
+	}
+
 }
 
 
