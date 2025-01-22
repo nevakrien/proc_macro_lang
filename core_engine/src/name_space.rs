@@ -133,7 +133,12 @@ impl Combinator<Object> for DeferedParse{
 			match parser.parse_pakerat(input,state){
 				Err(e) => match e {
 					PakeratError::Regular(e) => {error.combine(e)},
-					PakeratError::Recursive(_) => {return Err(PakeratError::Regular(error))}
+					PakeratError::Recursive(_) => {
+						let mut file = file.borrow_mut();
+						let info = file.type_info.get_mut(&self.0).unwrap();
+						info.cache.remove(&byte_idx);
+						return Err(PakeratError::Recursive(error))
+					}
 				}
 				Ok((cursor,obj)) => {
 					//we know the info is there so we can borrow just for this block
