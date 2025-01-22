@@ -102,7 +102,7 @@ pub type Source = Weak<TokenBuffer>;
 pub struct DeferedParse(pub Type,pub Ident);
 impl Combinator<Object> for DeferedParse{
 	fn parse_pakerat<'a>(&self, input: Cursor<'a>, state: &mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
-		//!!!Contract we can not leave pending entries that we created in the cache
+		// !!!Contract we can not leave pending entries that we created in the cache
 		//we also have to respect all recursive errors in parsers we call
 
 		let byte_idx = input.span().byte_range().start;

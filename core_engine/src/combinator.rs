@@ -31,6 +31,7 @@ impl<E: std::error::Error> PakeratError<E>{
 
 }
 
+///result type used for internal caching
 pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
 
 ///basic parser combinator trait used mainly by object parser
