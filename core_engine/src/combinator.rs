@@ -15,6 +15,21 @@ where
     fn parse<'a>(&self, input: Cursor<'a>,state: &mut State<'a>,) -> Result<(Cursor<'a>, T), E>;
 }
 
+// pub enum Pakerat<T, E = syn::Error>{
+//     Ok(T),
+//     Err(E),
+//     Pending,
+// }
+
+// impl<T, E> From<Pakerat<T,E>> for Result<T,E>{
+
+// fn from(x: Pakerat<T, E>) -> Self { 
+//     match x{
+//         Pakerat::Err(e) => Err(e),
+//         Pakerat::Ok(a) => Ok(a),
+//     } 
+// }
+// }
 
 pub fn initialize_state(text:&str) -> syn::Result<(Rc<TokenBuffer>,State)>{
      let tokens: TokenStream = text.parse()?;

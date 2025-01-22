@@ -85,7 +85,7 @@ pub type Source = Weak<TokenBuffer>;
 
 
 
-
+///this is still bugged because the pending/caching logic is not handeled well
 #[derive(Debug,Clone)]
 pub struct DeferedParse(pub Type,pub Ident);
 impl Combinator<Object> for DeferedParse{
@@ -104,13 +104,13 @@ impl Combinator<Object> for DeferedParse{
 
 
 			match info.cache.entry(byte_idx) {
-			    std::collections::hash_map::Entry::Occupied(mut entry) => match entry.get() {
+			    std::collections::hash_map::Entry::Occupied(entry) => match entry.get() {
 			        CacheState::Ok(cursor, obj) => return Ok((*cursor, obj.clone())),
 			        CacheState::Err(error) => return Err(error.clone()),
 			        CacheState::Pending => {
 			        	//this may be inserted multiple times as we call recursivly. which is fine but anoying
 			        	let error = syn::Error::new(input.span(),format!("infinite loop while parsing type {}",self.1));
-			        	entry.insert(CacheState::Err(error.clone()));
+			        	// entry.insert(CacheState::Err(error.clone()));
 			        	return Err(error);
 			        },
 			    },
@@ -424,6 +424,47 @@ use super::*;
 	    let invalid_result = deferred_parser.parse(invalid_input.begin(), &mut state);
 
 	    assert!(invalid_result.is_err(), "Expected error for invalid input, but got Ok result");
+	}
+
+	    //this test would go into an infinite loop if the detection method is broken
+    #[test]
+	fn test_deferred_infinite_parse_detection2() {
+	    // Create a global namespace and initialize state
+	    let (input, state) = initialize_state("42").unwrap();
+
+	    // Define a DeferedParse pointing to the int type
+	    let int_type :Type = BasicType::Int.into();
+	    let deferred_parser = DeferedParse(int_type.clone(), Ident::new("int", Span::call_site()));
+
+	    // Insert the DeferedParse into the existing type info for int\
+	    {
+	    	let type_info = &mut state.file.borrow_mut().type_info;
+	    	let int_data = type_info.get_mut(&int_type).expect("Int type data should exist");
+	    	int_data.parsers.insert(NonNanFloat::new(2.0).unwrap(), Rc::new(deferred_parser));
+		}	
+	    // Test parsing a valid integer
+	    let deferred_parser = DeferedParse(int_type.clone(), Ident::new("int", Span::call_site()));
+	    
+
+	    // Test parsing invalid input (non-integer)
+	    let (invalid_input, mut state) = initialize_state("not_a_number").unwrap();
+	    let invalid_result = deferred_parser.parse(invalid_input.begin(), &mut state);
+
+	    assert!(invalid_result.is_err(), "Expected error for invalid input, but got Ok result");
+
+	    let valid_result = deferred_parser.parse(input.begin(), &mut state);
+
+	    match valid_result {
+	        Ok((remaining, object)) => {
+	            if let ObjData::Basic(BasicData::Int(value)) = object.data {
+	                assert_eq!(value, 42, "Parsed integer value is incorrect");
+	            } else {
+	                panic!("Parsed object is not an integer");
+	            }
+	            assert!(remaining.eof(), "Remaining tokens after parsing");
+	        }
+	        Err(err) => panic!("Parsing valid input failed: {}", err),
+	    }
 	}
 
 }
