@@ -1,4 +1,5 @@
 
+use crate::name_space::NameSpace;
 use proc_macro2::{TokenStream,TokenTree,Delimiter};
 use syn::buffer::{Cursor,TokenBuffer};
 
@@ -13,7 +14,7 @@ use crate::types::{ObjectParser,Type};
 pub struct MatchParser(pub RcTokenBuffer);
 impl Combinator<Object> for MatchParser {
 
-    fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
+    fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_name_space:&NameSpace) 
     -> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> 
     {   
         let mut v = Vec::with_capacity(3);
@@ -215,7 +216,7 @@ fn parse_exact_match<'a>(actual: Cursor<'a>,expected:Cursor,del:Delimiter,mut ac
 pub struct ExactTokens(pub TokenBuffer);
 impl Combinator<Vec<TokenTree>> for ExactTokens {
 
-	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>) 
+	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_name_space:&NameSpace) 
 	-> Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(10);
@@ -254,6 +255,7 @@ impl fmt::Debug for ExactTokens {
 #[test]
 fn test_exact_tokens_combinator() {
     use proc_macro2::TokenStream;
+    let name_space = NameSpace::new_global();
     
 
     // Macro to test success
@@ -268,7 +270,7 @@ fn test_exact_tokens_combinator() {
 
                 let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
 
-                if let Err(err) = combinator.parse(actual_buff.begin()) {
+                if let Err(err) = combinator.parse(actual_buff.begin(),&name_space) {
                     panic!(
                         "Expected parse to succeed, but it failed:\nExpected: {:?}\nActual: {:?}\nError: {:?}",
                         $expected, $actual, err
@@ -289,7 +291,7 @@ fn test_exact_tokens_combinator() {
                 let combinator = ExactTokens(token_buffer);
 
                 let actual_buff = syn::buffer::TokenBuffer::new2(actual_stream);
-                if combinator.parse(actual_buff.begin()).is_ok() {
+                if combinator.parse(actual_buff.begin(),&name_space).is_ok() {
                     panic!(
                         "Expected parse to fail, but it succeeded:\nExpected: {:?}\nActual: {:?}",
                         $expected, $actual

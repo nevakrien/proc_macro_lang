@@ -1,3 +1,4 @@
+use crate::name_space::NameSpace;
 use crate::types::{Type,Object,ObjectParser};
 use crate::types::BasicType;
 
@@ -10,19 +11,19 @@ pub trait Combinator<T, E = syn::Error>
 where
     E: std::error::Error,
 {
-    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), E>;
+    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, T), E>;
 
 }
 
 pub trait CombinatorUtils<T, E = syn::Error>{
-	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>,  U), E>;
+	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>,  U), E>;
 }
 
 impl<T, E,C > CombinatorUtils<T,E> for C 
 where C : Combinator<T,E>,
 E: std::error::Error, {
-	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>,  U), E>{
-    	let (cursor,ans) = self.parse(input)?;
+	fn parse_into<'a,U:From<T>>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>,  U), E>{
+    	let (cursor,ans) = self.parse(input,name_space)?;
     	Ok((cursor,ans.into()))
     }
 }
@@ -109,7 +110,7 @@ macro_rules! define_parser {
         pub struct $name;
 
         impl Combinator<Object> for $name {
-            fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+            fn parse<'a>(&self, input: Cursor<'a>,_name_space:&NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
                 let (next, token) = $parse_fn(input)?;
                 Ok((next, Object::new(token,self.type_info())))
             }
@@ -212,31 +213,31 @@ fn test_basic_combinators() {
 }
 
 #[test]
-    fn test_parse_int() {
-        let tokens: TokenStream = "42 invalid_int".parse().unwrap();
-        let buffer = TokenBuffer::new2(tokens);
-        let mut cursor = buffer.begin();
+fn test_parse_int() {
+    let tokens: TokenStream = "42 invalid_int".parse().unwrap();
+    let buffer = TokenBuffer::new2(tokens);
+    let mut cursor = buffer.begin();
 
-        // Test parse_int success
-        match parse_int(cursor) {
-            Ok((next, value)) => {
-                assert_eq!(value, 42);
-                cursor = next;
-            }
-            Err(err) => panic!("parse_int failed: {}", err),
+    // Test parse_int success
+    match parse_int(cursor) {
+        Ok((next, value)) => {
+            assert_eq!(value, 42);
+            cursor = next;
         }
+        Err(err) => panic!("parse_int failed: {}", err),
+    }
 
-        // Test parse_int failure with non-integer literal
-        match parse_int(cursor) {
-            Ok((_, value)) => panic!(
-                "Expected parse_int to fail, but it succeeded with {:?}",
-                value
-            ),
-            Err(err) => {
-                assert!(err.to_string().contains("Expected an integer"));
-            }
+    // Test parse_int failure with non-integer literal
+    match parse_int(cursor) {
+        Ok((_, value)) => panic!(
+            "Expected parse_int to fail, but it succeeded with {:?}",
+            value
+        ),
+        Err(err) => {
+            assert!(err.to_string().contains("Expected an integer"));
         }
     }
+}
 
 #[derive(Debug,Clone,Copy)]
 pub struct DelTokenParser (pub Delimiter);
@@ -262,7 +263,7 @@ impl DelTokenParser{
 }
 
 impl Combinator<TokenStream> for DelTokenParser {
-    fn parse<'a>(&self, input: Cursor<'a>) -> syn::Result<(Cursor<'a>, TokenStream)> {
+    fn parse<'a>(&self, input: Cursor<'a>,_name_space: &NameSpace) -> syn::Result<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
             Some((group, _, next)) => {
                 Ok((next, group.token_stream()))
@@ -277,13 +278,14 @@ impl Combinator<TokenStream> for DelTokenParser {
 
 fn parse_delimited<'a, T>(
     input: Cursor<'a>,
+    name_space: &NameSpace,
     del_token_parser: DelTokenParser,
-    parse_inner: impl for<'b> FnOnce(Cursor<'b>) -> Result<(Cursor<'b>, T), syn::Error>,
+    parse_inner: impl for<'b> FnOnce(Cursor<'b>,&NameSpace) -> Result<(Cursor<'b>, T), syn::Error>,
 ) -> Result<(Cursor<'a>, T), syn::Error> {
-    let (cursor, inner) = del_token_parser.parse(input)?;
+    let (cursor, inner) = del_token_parser.parse(input,name_space)?;
     let buff = TokenBuffer::new2(inner);
 
-    let (inner_cursor, result) = parse_inner(buff.begin())?;
+    let (inner_cursor, result) = parse_inner(buff.begin(),name_space)?;
 
     if !inner_cursor.eof() {
         let delimiter_name = del_token_parser.get_end_del();
@@ -301,9 +303,9 @@ fn parse_delimited<'a, T>(
 pub struct DelCombParser<T>(pub DelTokenParser, pub Rc<dyn Combinator<T>>);
 
 impl<T> Combinator<T> for DelCombParser<T> {
-    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, T), syn::Error> {
+    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, T), syn::Error> {
         // Pass the inner parser as a closure
-        parse_delimited(input,self.0, |inner_input| self.1.parse(inner_input))
+        parse_delimited(input,name_space,self.0, |inner_input,name_space| self.1.parse(inner_input,name_space))
     }
 }
 
@@ -312,9 +314,9 @@ impl<T> Combinator<T> for DelCombParser<T> {
 pub struct DelParser(pub DelTokenParser, pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for DelParser {
-    fn parse<'a>(&self, input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+    fn parse<'a>(&self, input: Cursor<'a>,name_space: &NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
         // Pass the inner parser as a closure
-        parse_delimited(input,self.0, |inner_input| self.1.parse(inner_input))
+        parse_delimited(input,name_space,self.0, |inner_input,name_space| self.1.parse(inner_input,name_space))
     }
 }
 
@@ -333,6 +335,7 @@ impl DelParser{
 
 #[test]
 fn test_delimited_sequence_combinator() {
+	let name_space = NameSpace::new_global();
     let tokens: TokenStream = "[1, 2, 3]".parse().unwrap();
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
@@ -340,7 +343,7 @@ fn test_delimited_sequence_combinator() {
     let combinator = DelTokenParser(Delimiter::Bracket);
 
     // Test parsing a delimited sequence
-    match combinator.parse(cursor) {
+    match combinator.parse(cursor,&name_space) {
         Ok((next, token_stream)) => {
             assert_eq!(token_stream.to_string(), "1 , 2 , 3");
             assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
@@ -353,7 +356,7 @@ fn test_delimited_sequence_combinator() {
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
 
-    match combinator.parse(cursor) {
+    match combinator.parse(cursor,&name_space) {
         Ok(_) => panic!("Expected DelimitedSequence to fail, but it succeeded"),
         Err(err) => {
             assert!(err.to_string().contains("Expected delimited group starting with '['"));
@@ -368,7 +371,7 @@ fn test_delimited_sequence_combinator() {
     let inner_combinator = Rc::new(DelTokenParser(Delimiter::Bracket));
     let nested_combinator = DelCombParser(DelTokenParser(Delimiter::Parenthesis), inner_combinator);
 
-    match nested_combinator.parse(cursor) {
+    match nested_combinator.parse(cursor,&name_space) {
         Ok((next, token_stream)) => {
             assert_eq!(token_stream.to_string(), "text");
             assert!(next.token_tree().is_none(), "Expected no tokens after the delimited group");
@@ -381,7 +384,7 @@ fn test_delimited_sequence_combinator() {
     let buffer = TokenBuffer::new2(tokens);
     let cursor = buffer.begin();
 
-    match nested_combinator.parse(cursor) {
+    match nested_combinator.parse(cursor,&name_space) {
         Ok(_) => panic!("Expected Nested DelimitedSequence to fail, but it succeeded"),
         Err(err) => {
             assert!(err.to_string().contains("Expected delimited group starting with '('"));

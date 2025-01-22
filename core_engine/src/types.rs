@@ -1,3 +1,4 @@
+use crate::name_space::NameSpace;
 use std::collections::BTreeSet;
 use std::collections::BTreeMap;
 use proc_macro2::Literal;
@@ -89,6 +90,7 @@ pub enum Type{
 	Struct(Rc<StructTypes>),
 	Alias(Rc<Type>,Unique),
 	Union(Rc<BTreeSet<Type>>),
+	Parser(Rc<Type>),
 	External(Unique),
 }
 
@@ -101,7 +103,8 @@ impl Type{
 			Struct(_)=>2,
 			Alias(_, _)=>3,
 			Union(_)=>4,
-			External(_)=>5,
+			Parser(_)=>5,
+			External(_)=>6,
 		}
 	}
 }
@@ -120,6 +123,7 @@ impl Ord for Type {
             //recursivly compare
             (Array(a), Array(b)) => a.cmp(b),
             (Struct(a), Struct(b)) => a.cmp(b),
+            (Parser(a), Parser(b)) => a.cmp(b),
             (Union(u1), Union(u2)) => u1.cmp(u2),
             
             //this is an arbitrary choice but it is consistent
@@ -170,6 +174,8 @@ pub enum ObjData{
 	Basic(BasicData),
 	Array(Rc<[Object]>),
 	Struct(Rc<StructData>),
+	Parser(Rc<dyn ObjectParser>),
+
 	External(Rc<dyn Any>)
 }
 
@@ -227,11 +233,25 @@ impl From<StructData> for ObjData {
     }
 }
 
+impl From<Rc<dyn ObjectParser>> for ObjData {
+    fn from(data: Rc<dyn ObjectParser>) -> Self {
+        ObjData::Parser(data)
+    }
+}
+
 impl From<TokenTree> for Object {
     fn from(data: TokenTree) -> Self {
         Object::new(data,BasicType::Tree.into())
     }
 }
+
+impl From<Rc<dyn ObjectParser>> for Object {
+    fn from(data: Rc<dyn ObjectParser>) -> Self {
+    	let t = Type::Parser(data.type_info().into());
+        Object::new(data,t)
+    }
+}
+
 
 
 ///All data heled by the runtime.
@@ -290,7 +310,7 @@ where
     fn type_info(&self) -> Type;
 }
 
-#[derive(Debug,Clone)]
+#[derive(Debug)]
 pub struct StructParser(pub Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>,pub Rc<StructTypes>);
 
 impl StructParser{
@@ -335,10 +355,10 @@ impl StructParser{
 }
 
 impl Combinator<Object> for StructParser{
-	fn parse<'a>(&self, mut input: Cursor<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse<'a>(&self, mut input: Cursor<'a>,name_space:&NameSpace) -> Result<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
 		for (opt,parser) in &self.0 {
-			let (new_cursor,obj) = parser.parse(input)?;
+			let (new_cursor,obj) = parser.parse(input,name_space)?;
 			input = new_cursor;
 			if let Some(ident)=opt{
 				data.insert(ident.clone(),obj);
@@ -404,6 +424,8 @@ use super::*;
 
 	#[test]
 	fn struct_parser_basic_parse() {
+		let name_space = NameSpace::new_global();
+
 	    // Define fields in the struct
 	    let fields = Box::new([
 	        (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
@@ -422,7 +444,7 @@ use super::*;
 
 	    // Parse the token stream using StructParser
 	    let (remaining_cursor, object) = struct_parser
-	        .parse(cursor)
+	        .parse(cursor,&name_space)
 	        .unwrap(); // Unwrap for better diagnostics
 
 	    // Ensure the remaining cursor is at the end
@@ -461,6 +483,9 @@ use super::*;
 
     #[test]
     fn struct_parser_fail_parse() {
+		let name_space = NameSpace::new_global();
+
+
         // Define fields in the struct
         let fields = Box::new([
             (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
@@ -477,7 +502,7 @@ use super::*;
         let cursor = token_buffer.begin();
 
         // Parse the token stream using StructParser
-        let result = struct_parser.parse(cursor);
+        let result = struct_parser.parse(cursor,&name_space);
 
         // Expect an error because the input doesn't match the sequence
         assert!(result.is_err());
