@@ -1,4 +1,6 @@
 
+use crate::combinator::Pakerat;
+use crate::combinator::PakeratError;
 use crate::combinator::{Combinator,State};
 #[cfg(test)]
 use crate::combinator::initialize_state;
@@ -94,8 +96,8 @@ macro_rules! define_parser {
         pub struct $name;
 
         impl Combinator<Object> for $name {
-            fn parse<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Result<(Cursor<'a>, Object), syn::Error> {
-                let (next, token) = $parse_fn(input)?;
+            fn parse_pakerat<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
+                let (next, token) = $parse_fn(input).map_err(|e| PakeratError::Regular(e))?;
                 Ok((next, Object::new(token,self.type_info())))
             }
         }
@@ -246,14 +248,16 @@ pub fn get_end_del(del:Delimiter) -> &'static str {
 struct DelTokenParser (Delimiter);
 
 impl Combinator<TokenStream> for DelTokenParser {
-    fn parse<'a>(&self, input: Cursor<'a>,_state:&mut State) -> syn::Result<(Cursor<'a>, TokenStream)> {
+    fn parse_pakerat<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Pakerat<(Cursor<'a>, TokenStream)> {
         match input.group(self.0) {
             Some((group, _, next)) => {
                 Ok((next, group.token_stream()))
             }
             None => {
                 let delimiter_name = get_start_del(self.0);
-                Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
+                let message = format!("Expected delimited group starting with '{}'", delimiter_name);
+                let error = syn::Error::new(input.span(),message); 
+                Err(PakeratError::Regular(error))
             }
         }
     }
@@ -264,29 +268,30 @@ impl Combinator<TokenStream> for DelTokenParser {
 
 fn parse_delimited<'a, T>(
     input: Cursor<'a>,
-    state:&mut State<'a>,
-    del:Delimiter,
-    parse_inner: &(impl Combinator<T> + ?Sized),
-) -> Result<(Cursor<'a>, T), syn::Error> {
-    // let (cursor, inner) = del_token_parser.parse(input,state)?;
-    // let buff = TokenBuffer::new2(inner);
-
-    let (group,next) = match input.group(del) {
+    state: &mut State<'a>,
+    del: Delimiter,
+    parse_inner: &(impl Combinator<T, syn::Error> + ?Sized),
+) -> Pakerat<(Cursor<'a>, T), syn::Error>
+{
+    let (group, next) = match input.group(del) {
         None => {
-        	let delimiter_name = get_start_del(del);
-            return Err(syn::Error::new(input.span(), format!("Expected delimited group starting with '{}'", delimiter_name)))
-        },
-        Some((group,_,next)) => (group,next)
+            let delimiter_name = get_start_del(del);
+            return Err(PakeratError::Regular(syn::Error::new(
+                input.span(),
+                format!("Expected delimited group starting with '{}'", delimiter_name),
+            )));
+        }
+        Some((group, _, next)) => (group, next),
     };
 
-    let (inner_cursor, result) = parse_inner.parse(group,state)?;
+    let (inner_cursor, result) = parse_inner.parse_pakerat(group, state)?;
 
     if !inner_cursor.eof() {
         let delimiter_name = get_end_del(del);
-        return Err(syn::Error::new(
+        return Err(PakeratError::Regular(syn::Error::new(
             input.span(),
-            format!("Expected delimited group starting with '{}'", delimiter_name),
-        ));
+            format!("Expected delimited group ending with '{}'", delimiter_name),
+        )));
     }
 
     Ok((next, result))
@@ -297,7 +302,7 @@ fn parse_delimited<'a, T>(
 pub struct DelCombParser<T>(pub Delimiter, pub Rc<dyn Combinator<T>>);
 
 impl<T> Combinator<T> for DelCombParser<T> {
-    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, T), syn::Error> {
+    fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, T), syn::Error> {
         // Pass the inner parser as a closure
         parse_delimited(input,state,self.0, &*self.1)
     }
@@ -308,7 +313,7 @@ impl<T> Combinator<T> for DelCombParser<T> {
 pub struct DelParser(pub Delimiter, pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for DelParser {
-    fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+    fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
         parse_delimited(input,state,self.0, &*self.1)
     }
 }

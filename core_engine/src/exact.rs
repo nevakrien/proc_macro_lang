@@ -1,4 +1,6 @@
 
+use crate::combinator::PakeratError;
+use crate::combinator::Pakerat;
 #[cfg(test)]
 use crate::combinator::initialize_state;
 
@@ -30,13 +32,14 @@ impl fmt::Debug for MatchParser {
 }
 
 impl Combinator<Object> for MatchParser {
-    fn parse<'a>(
+    fn parse_pakerat<'a>(
         &self,
         actual: syn::buffer::Cursor<'a>,
         _state: &mut State,
-    ) -> Result<(syn::buffer::Cursor<'a>, Object), syn::Error> {
+    ) -> Pakerat<(syn::buffer::Cursor<'a>, Object), syn::Error> {
         let mut v = Vec::with_capacity(3);
-        let cursor = parse_exact_match(actual, self.0.begin(), Delimiter::None, Some(&mut v))?;
+        let cursor = parse_exact_match(actual, self.0.begin(), Delimiter::None, Some(&mut v))
+        .map_err(|e| PakeratError::Regular(e))?;
         Ok((cursor, Object::from_iter(v.into_iter(), self.type_info())))
     }
 }
@@ -196,11 +199,12 @@ fn parse_exact_match<'a>(actual: Cursor<'a>,expected:Cursor,del:Delimiter,mut ac
 pub struct ExactTokens(pub TokenBuffer);
 impl Combinator<Vec<TokenTree>> for ExactTokens {
 
-	fn parse<'a>(&self, actual: syn::buffer::Cursor<'a>,_state:&mut State) 
-	-> Result<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
+	fn parse_pakerat<'a>(&self, actual: syn::buffer::Cursor<'a>,_state:&mut State) 
+	-> Pakerat<(syn::buffer::Cursor<'a>, Vec<TokenTree>), syn::Error> 
 	{ 	
 		let mut v = Vec::with_capacity(10);
-		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))?;
+		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))
+        .map_err(|e| PakeratError::Regular(e))?;
 		Ok((cursor,v))
 	}
 }

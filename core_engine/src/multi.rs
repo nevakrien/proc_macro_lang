@@ -1,3 +1,5 @@
+use crate::combinator::Pakerat;
+use crate::combinator::PakeratError;
 use crate::combinator::State;
 use crate::types::BasicType;
 use crate::combinator::Combinator;
@@ -6,17 +8,24 @@ use crate::types::ObjectParser;
 use std::rc::Rc;
 use syn::buffer::Cursor;
 
-pub fn parse_many<'a,T,E>(
+pub fn parse_many<'a,T,E: std::error::Error>(
     mut input: Cursor<'a>,
     state:&mut State<'a>,
-	parser: impl for<'b> Fn(Cursor<'b>,&mut State<'b>) -> Result<(Cursor<'b>, T), E>,
+	parser: impl for<'b> Fn(Cursor<'b>,&mut State<'b>) -> Pakerat<(Cursor<'b>, T), E>,
 	ans:&mut Vec<T>
-)-> Cursor<'a>{
-	while let Ok((new_input,item)) = parser(input,state){
-		ans.push(item);
-		input = new_input;
+)-> Result<Cursor<'a>, E>{
+	loop{
+		match parser(input,state){
+			Ok((new_input,item))=>{
+				ans.push(item);
+				input = new_input;
+			},
+			Err(e) => return match e{
+				PakeratError::Regular(_) => Ok(input),
+				PakeratError::Recursive(e) => Err(e),
+			}
+		}
 	}
-	input
 }
 
 #[derive(Debug,Clone)]
@@ -24,9 +33,13 @@ pub struct Many0(pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for Many0{
 
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		let mut ans = Vec::new();
-		let cursor = parse_many(input,state,|c,n| {self.0.parse(c,n)},&mut ans);
+		let res = parse_many(input,state,|c,n| {self.0.parse_pakerat(c,n)},&mut ans);
+		let cursor = match res {
+			Ok(x) => x,
+			Err(e) => return Err(PakeratError::Recursive(e))
+		};
 		Ok((cursor,Object::new(ans,self.type_info())))
 	}
 }
@@ -40,10 +53,15 @@ impl ObjectParser for Many0{
 pub struct Many1(pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for Many1{
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
-		let (cursor,first) = self.0.parse(input,state)?;
+	fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
+		let (cursor,first) = self.0.parse_pakerat(input,state)?;
 		let mut ans = vec![first];
-		let cursor = parse_many(cursor,state,|c,n| {self.0.parse(c,n)},&mut ans);
+		let res = parse_many(cursor,state,|c,n| {self.0.parse_pakerat(c,n)},&mut ans);
+
+		let cursor = match res {
+			Ok(x) => x,
+			Err(e) => return Err(PakeratError::Recursive(e))
+		};
 		Ok((cursor,Object::new(ans,self.type_info())))
 	}
 }
@@ -65,15 +83,18 @@ impl OneOf{
 }
 
 impl Combinator<Object> for OneOf{
-	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse_pakerat<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		let mut error = syn::Error::new(input.span(),format!("errored on {} things (OneOf):",self.0.len()));
 		for parser in &self.0 {
-			match parser.parse(input,state){
-				Err(e) => {error.combine(e)}
+			match parser.parse_pakerat(input,state){
+				Err(e) => match e{
+					PakeratError::Regular(e)=>{error.combine(e)},
+					PakeratError::Recursive(_)=>{return Err(e)},
+				},
 				Ok(x) => {return Ok(x);}
 			}
 		}
-		Err(error)
+		Err(PakeratError::Regular(error))
 	}
 }
 
@@ -92,10 +113,13 @@ impl Maybe{
 }
 
 impl Combinator<Object> for Maybe{
-	fn parse<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
-		match self.0.parse(input,state){
+	fn parse_pakerat<'a>(&self,input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
+		match self.0.parse_pakerat(input,state){
 			Ok(x) => Ok(x),
-			Err(_e) => Ok((input,Object::none()))
+			Err(e) => match e{
+				PakeratError::Regular(_)=> Ok((input,Object::none())),
+				PakeratError::Recursive(_)=> Err(e),
+			},
 		}
 	}
 }
@@ -108,10 +132,10 @@ impl ObjectParser for Maybe{
 pub struct Recognize(pub Box<[Rc<dyn ObjectParser>]>);
 
 impl Combinator<Object> for Recognize{
-	fn parse<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		let mut cursor = input;
 		for parser in &self.0 {
-			let (new_cursor,_obj) = parser.parse(cursor,state)?;
+			let (new_cursor,_obj) = parser.parse_pakerat(cursor,state)?;
 			cursor = new_cursor;
 
 		}

@@ -1,3 +1,4 @@
+use crate::combinator::Pakerat;
 use crate::combinator::State;
 use std::collections::BTreeSet;
 use std::collections::BTreeMap;
@@ -376,10 +377,10 @@ impl StructParser{
 }
 
 impl Combinator<Object> for StructParser{
-	fn parse<'a>(&self, mut input: Cursor<'a>,state:&mut State<'a>) -> Result<(Cursor<'a>, Object), syn::Error> {
+	fn parse_pakerat<'a>(&self, mut input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
 		for (opt,parser) in &self.0 {
-			let (new_cursor,obj) = parser.parse(input,state)?;
+			let (new_cursor,obj) = parser.parse_pakerat(input,state)?;
 			input = new_cursor;
 			if let Some(ident)=opt{
 				data.insert(ident.clone(),obj);
