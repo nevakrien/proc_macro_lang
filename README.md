@@ -38,8 +38,8 @@ PEG has some shorcomings for instance the rule :
 a:int \[+\] b:int => (a+b):int
 
 will never parse sucessfully.
-if it is defined to operate first then "+" will call "int" which will imidiatly call "+".
-if it is desgined to operate second then it will allways be parsed like so:
+if it is called first then "+" will call "int" which will imidiatly call "+".
+if it is called second then it will allways be parsed like so:
 
 a:int + \[+ b:int\]
 
