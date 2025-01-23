@@ -1,9 +1,6 @@
 use crate::combinator::PakeratError;
 use crate::combinator::Pakerat;
 use std::fmt;
-use std::cell::RefCell;
-use std::rc::Weak;
-use syn::buffer::TokenBuffer;
 use std::collections::BTreeMap;
 use crate::types::BasicType;
 use crate::types::Type;

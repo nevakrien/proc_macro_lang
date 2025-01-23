@@ -2,18 +2,24 @@
 use crate::combinator::Pakerat;
 use crate::combinator::PakeratError;
 use crate::combinator::{Combinator,State};
-#[cfg(test)]
-use crate::combinator::initialize_state;
+
 
 use crate::types::{Type,Object,ObjectParser};
 use crate::types::BasicType;
 
 use std::rc::Rc;
-use crate::syn::buffer::{Cursor,TokenBuffer};
-use proc_macro2::{TokenStream,TokenTree,Delimiter, Group, Ident, Literal, Punct};
+use crate::syn::buffer::{Cursor};
+use proc_macro2::{TokenTree,Delimiter, Group, Ident, Literal, Punct};
 
 
+#[cfg(test)]
+use syn::buffer::TokenBuffer;
 
+#[cfg(test)]
+use crate::combinator::initialize_state;
+
+#[cfg(test)]
+use proc_macro2::TokenStream;
 
 fn parse_literal(input: Cursor) -> Result<(Cursor, Literal), syn::Error> {
     match input.token_tree() {
@@ -128,9 +134,6 @@ fn test_dumby_dyn_structs(){
 
 #[test]
 fn test_basic_combinators() {
-    use syn::buffer::TokenBuffer;
-    use proc_macro2::TokenStream;
-
     let tokens: TokenStream = "42 identifier + (inner) invalid".parse().unwrap();
     let buffer = TokenBuffer::new2(tokens);
     let mut cursor = buffer.begin();
@@ -245,7 +248,7 @@ pub fn get_end_del(del:Delimiter) -> &'static str {
 
 //used as a tester
 #[derive(Debug,Clone,Copy)]
-struct DelTokenParser (Delimiter);
+pub struct DelTokenParser (Delimiter);
 
 impl Combinator<TokenStream> for DelTokenParser {
     fn parse_pakerat<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Pakerat<(Cursor<'a>, TokenStream)> {
@@ -263,7 +266,23 @@ impl Combinator<TokenStream> for DelTokenParser {
     }
 }
 
+impl Combinator<Object> for DelTokenParser{
+	fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object)>{
+		let (cursor,stream): (syn::buffer::Cursor<'a>, TokenStream) = self.parse_pakerat(input,state)?;
+		let v :Vec<Object>= stream.into_iter().map(|x| x.into()).collect();
+		let t: Type = BasicType::Tree.into();
+		let obj = Object::new(v,Type::Array(t.into()));
+		Ok((cursor,obj))
+	}
+}
 
+impl ObjectParser for DelTokenParser {
+
+fn type_info(&self) -> Type {
+	let t: Type = BasicType::Tree.into();
+	Type::Array(t.into())
+}
+}
 
 
 fn parse_delimited<'a, T>(
