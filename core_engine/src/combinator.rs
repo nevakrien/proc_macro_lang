@@ -51,7 +51,7 @@ where
     fn parse_pakerat<'a>(&self, input: Cursor<'a>,state: &mut State<'a>,) -> Pakerat<(Cursor<'a>, T), E>
     {   
         //chosing recursive as the baseline to avoid corupted states
-        self.parse(input,state).map_err(|e| PakeratError::Recursive(e))
+        self.parse(input,state).map_err(PakeratError::Recursive)
     }
 
     ///this function is what you would typically use as an entry point.

@@ -39,7 +39,7 @@ impl Combinator<Object> for MatchParser {
     ) -> Pakerat<(syn::buffer::Cursor<'a>, Object), syn::Error> {
         let mut v = Vec::with_capacity(3);
         let cursor = parse_exact_match(actual, self.0.begin(), Delimiter::None, Some(&mut v))
-        .map_err(|e| PakeratError::Regular(e))?;
+        .map_err(PakeratError::Regular)?;
         Ok((cursor, Object::from_iter(v.into_iter(), self.type_info())))
     }
 }
@@ -204,7 +204,7 @@ impl Combinator<Vec<TokenTree>> for ExactTokens {
 	{ 	
 		let mut v = Vec::with_capacity(10);
 		let cursor = parse_exact_match(actual,self.0.begin(),Delimiter::None,Some(&mut v))
-        .map_err(|e| PakeratError::Regular(e))?;
+        .map_err(PakeratError::Regular)?;
 		Ok((cursor,v))
 	}
 }

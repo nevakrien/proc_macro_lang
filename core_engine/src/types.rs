@@ -334,17 +334,32 @@ where
 
 
 #[derive(Debug)]
-pub struct StructParser(pub Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>,pub Rc<StructTypes>);
+pub struct StructPair {
+	pub capture:Option<Ident>,
+	pub parser:Rc<dyn ObjectParser>
+}
+
+impl StructPair{
+	pub fn new(capture:Option<Ident>,parser:Rc<dyn ObjectParser>) -> Self{
+		StructPair{capture,parser}
+	}
+}
+
+#[derive(Debug)]
+pub struct StructParser{
+	pub parser: Box<[StructPair]>,
+	pub types: Rc<StructTypes>
+}
 
 impl StructParser{
-	pub fn new(fields:Box<[(Option<Ident>,Rc<dyn ObjectParser>)]>) -> Result<Self,syn::Error>{
+	pub fn new(fields:Box<[StructPair]>) -> Result<Self,syn::Error>{
 		let mut types = Rc::new(StructTypes::new());
 		let r = Rc::get_mut(&mut types).unwrap();
 		let mut error_map :HashMap<Ident,Vec<Ident>> = HashMap::new();
 
 		for (ident,parser) in fields.iter()
-		.filter(|(i,_)| !i.is_none())
-		.map(|(i,parser)| (i.as_ref().unwrap(),parser)) 
+		.filter(|StructPair{capture,..}| !capture.is_none())
+		.map(|StructPair{capture,parser}| (capture.as_ref().unwrap(),parser)) 
 		{
 			match r.entry(ident.clone()) {
 				BEntry::Vacant(spot) => {spot.insert(parser.type_info());},
@@ -373,17 +388,17 @@ impl StructParser{
 
             return Err(error.unwrap());
         }
-        Ok(Self(fields, types))
+        Ok(Self{parser:fields, types})
 	}
 }
 
 impl Combinator<Object> for StructParser{
 	fn parse_pakerat<'a>(&self, mut input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		let mut data = StructData::new();
-		for (opt,parser) in &self.0 {
+		for StructPair{capture,parser} in &self.parser {
 			let (new_cursor,obj) = parser.parse_pakerat(input,state)?;
 			input = new_cursor;
-			if let Some(ident)=opt{
+			if let Some(ident)=capture{
 				data.insert(ident.clone(),obj);
 			}
 
@@ -393,7 +408,7 @@ impl Combinator<Object> for StructParser{
 }
 
 impl ObjectParser for StructParser{
-	fn type_info(&self) ->Type { Type::Struct(self.1.clone())}
+	fn type_info(&self) ->Type { Type::Struct(self.types.clone())}
 }
 
 #[cfg(test)]
@@ -416,11 +431,11 @@ use super::*;
 
 	    // Define fields with duplicates
 	    let fields = Box::new([
-	        (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
-	        (parse_quote! { field2 }, Rc::new(WordParser)),
-	        (parse_quote! { field1 }, Rc::new(PuncParser)),
-	        (parse_quote! { field3 }, Rc::new(GroupParser)),
-	        (parse_quote! { field2 }, Rc::new(AnyParser)),
+	        StructPair::new(parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
+	        StructPair::new(parse_quote! { field2 }, Rc::new(WordParser)),
+	        StructPair::new(parse_quote! { field1 }, Rc::new(PuncParser)),
+	        StructPair::new(parse_quote! { field3 }, Rc::new(GroupParser)),
+	        StructPair::new(parse_quote! { field2 }, Rc::new(AnyParser)),
 	    ]);
 
 	    // Attempt to create the StructParser
@@ -451,10 +466,10 @@ use super::*;
 
 	    // Define fields in the struct
 	    let fields = Box::new([
-	        (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
-	        (parse_quote! { field2 }, Rc::new(WordParser)),
-	        (None, Rc::new(WordParser)),
-	        (parse_quote! { field3 }, Rc::new(PuncParser)),
+	        StructPair::new(parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
+	        StructPair::new(parse_quote! { field2 }, Rc::new(WordParser)),
+	        StructPair::new(None, Rc::new(WordParser)),
+	        StructPair::new(parse_quote! { field3 }, Rc::new(PuncParser)),
 	    ]);
 
 	    // Create the StructParser
@@ -509,9 +524,9 @@ use super::*;
 
         // Define fields in the struct
         let fields = Box::new([
-            (parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
-            (parse_quote! { field2 }, Rc::new(WordParser)),
-            (parse_quote! { field3 }, Rc::new(PuncParser)),
+            StructPair::new(parse_quote! { field1 }, Rc::new(LiteralParser) as Rc<dyn ObjectParser>),
+            StructPair::new(parse_quote! { field2 }, Rc::new(WordParser)),
+            StructPair::new(parse_quote! { field3 }, Rc::new(PuncParser)),
         ]);
 
         // Create the StructParser

@@ -247,7 +247,7 @@ pub fn get_end_del(del:Delimiter) -> &'static str {
 
 //used as a tester
 #[derive(Debug,Clone,Copy)]
-pub struct DelTokenParser (Delimiter);
+pub struct DelTokenParser (pub Delimiter);
 
 impl Combinator<TokenStream> for DelTokenParser {
     fn parse_pakerat<'a>(&self, input: Cursor<'a>,_state:&mut State) -> Pakerat<(Cursor<'a>, TokenStream)> {
@@ -316,7 +316,7 @@ fn parse_delimited<'a, T>(
 
 /// Generic parser for delimited groups with typed output.
 #[derive(Clone)]
-pub struct DelCombParser<T>(pub Delimiter, pub Rc<dyn Combinator<T>>);
+pub struct DelCombParser<T=Object>(pub Delimiter, pub Rc<dyn Combinator<T>>);
 
 impl<T> Combinator<T> for DelCombParser<T> {
     fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, T), syn::Error> {

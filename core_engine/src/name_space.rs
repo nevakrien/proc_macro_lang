@@ -1,3 +1,5 @@
+use crate::basic_parsing::DelTokenParser;
+use proc_macro2::Delimiter;
 use crate::combinator::PakeratError;
 use crate::combinator::Pakerat;
 use std::fmt;
@@ -39,7 +41,7 @@ pub enum CacheState<'a>{
 	Ok(Cursor<'a>,Object)
 }
 // Implement Debug for CacheState
-impl<'a> fmt::Debug for CacheState<'a> {
+impl fmt::Debug for CacheState<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             CacheState::Pending => write!(f, "CacheState::Pending"),
@@ -228,6 +230,10 @@ impl ObjectScope<'_>{
             group_parser => GroupParser,
             end_parser => EndParser,
             int_parser => IntParser,
+
+            bracket_token_parser => DelTokenParser(Delimiter::Bracket),
+            paren_token_parser => DelTokenParser(Delimiter::Parenthesis),
+            brace_token_parser => DelTokenParser(Delimiter::Brace),
         });
 		
 		Scope{map,parent:None}
@@ -278,6 +284,8 @@ impl<T> Scope<'_, T> where T : Clone {
 		}
 	}
 
+	//wana make sure the lifetimes are what i think they are
+	#[allow(clippy::needless_lifetimes)]
 	pub fn make_child<'b>(&'b self) -> Scope<'b, T>{
 		Scope{
 			map:HashMap::new(),
@@ -462,15 +470,11 @@ impl NonNanFloat {
             Some(Self(value))
         }
     }
-
-    // Unsafe constructor if you're absolutely sure the value is not NaN
-    pub unsafe fn new_unchecked(value: f32) -> Self {
-        Self(value)
-    }
 }
 
 impl Eq for NonNanFloat {}
 
+#[allow(clippy::derive_ord_xor_partial_ord)]
 impl Ord for NonNanFloat {
     fn cmp(&self, other: &Self) -> Ordering {
         self.0.partial_cmp(&other.0).expect("Comparison failed; invalid float values detected")
