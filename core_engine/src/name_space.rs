@@ -75,17 +75,6 @@ fn default() -> Self {
 
 
 
-/// A cache that maps sources to file caches, with automatic cleanup of stale entries.
-#[derive(Default,Debug)]
-pub struct GlobalNameSpace<'a> {
-    cache: HashMap<*const TokenBuffer, (Weak<TokenBuffer>, Rc<RefCell<FileNameSpace<'a>>>)>,
-    counter: usize, // Tracks when to trigger cleanup
-}
-
-/// A key used by GlobalNameSpace for the purpose of retriving token buffers
-pub type Source = Weak<TokenBuffer>;
-
-
 
 ///parses a type based on the callers file scope.
 ///
@@ -140,6 +129,9 @@ impl Combinator<Object> for DeferedParse{
 			.map(Rc::clone).collect::<Vec<Rc<dyn ObjectParser>>>()
 		};
 
+		//note that even tho we dont hold the info we still know its in the table
+		//that assumbtion is only broken for recursive errors
+
 		let mut error = syn::Error::new(input.span(),format!("errored in parse of type {}",self.1));
 		for parser in to_iter {
 			
@@ -151,18 +143,18 @@ impl Combinator<Object> for DeferedParse{
 
 						//removing the pending entry as it is now wrong
 						let mut file = file.borrow_mut();
-						let info = file.type_info.get_mut(&self.0).unwrap();
-						info.cache.remove(&byte_idx);
+						if let Some(info) = file.type_info.get_mut(&self.0){
+							info.cache.remove(&byte_idx);
+						}
+						
 						return Err(PakeratError::Recursive(error))
 					}
 				}
 				Ok((cursor,obj)) => {
-					//we know the info is there so we can borrow just for this block
 					let mut file = file.borrow_mut();
 					let info = file.type_info.get_mut(&self.0).unwrap();
 					info.cache.insert(byte_idx,CacheState::Ok(cursor,obj.clone()));
-					return Ok((cursor,obj))
-					
+					return Ok((cursor,obj))	
 
 				},
 			}
@@ -180,61 +172,6 @@ impl Combinator<Object> for DeferedParse{
 impl ObjectParser for DeferedParse{
 
 fn type_info(&self) -> Type { self.0.clone()}
-}
-
-impl<'a> GlobalNameSpace<'a> {
-    /// Creates a new empty `GlobalNameSpace`.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Retrieves an `Rc<RefCell<FileNameSpace>>`, resetting stale entries if necessary.
-    ///
-    /// Automatically calls `clean_up` when the internal counter exceeds the cache size.
-    /// 
-    /// This function is an armotized O(1) time with a potential O(n) spike for cleanups
-    pub fn get<'b>(&'b mut self, source: &Source) -> Rc<RefCell<FileNameSpace<'a>>> {
-        // Perform cleanup when counter reaches cache size (amortized O(1) cleanup)
-        if self.counter >= self.cache.len() {
-            self.clean_up();
-        }
-
-        self.get_no_cleanup(source)
-    }
-
-    /// Similar to get just without the automatic call to cleanup
-    /// 
-    /// As such using this function can cause an effective memory leak unless cleanup is called at some point
-    pub fn get_no_cleanup<'b>(&'b mut self, source: &Source) -> Rc<RefCell<FileNameSpace<'a>>> {
-        // Using the raw pointer to `TokenBuffer` as a key ensures no collisions:
-        // Since no 2 Rcs can share memory and not be the same object.
-        // Even if a `Weak<TokenBuffer>` points to a freed `Rc`, it is impossible for another `Rc`
-        // to reuse the same address while sharing the same `Weak` pointer location.
-        let key = source.as_ptr();
-
-        let entry = self.cache.entry(key).or_insert_with(|| {
-            self.counter += 1; // Increment counter on new entry
-            let cache = Rc::new(RefCell::new(FileNameSpace::default()));
-            (source.clone(), cache)
-        });
-
-        // Replace stale entries with a fresh `FileNameSpace`
-        if entry.0.upgrade().is_none() {
-            let cache = Rc::new(RefCell::new(FileNameSpace::default()));
-            entry.0 = source.clone();
-            entry.1 = cache;
-        }
-
-        entry.1.clone()
-    }
-
-    /// Removes all stale entries from the cache.
-    ///
-    /// Resets the counter to zero after cleanup.
-    pub fn clean_up(&mut self) {
-        self.counter = 0;
-        self.cache.retain(|_, (source, _)| source.upgrade().is_some());
-    }
 }
 
 
