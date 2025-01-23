@@ -70,6 +70,8 @@ pub enum BasicType {
     Word,
     Punc,
     Group,
+
+    TypeRef,
     /*might want:
     	Token
     	...
@@ -190,6 +192,8 @@ pub enum BasicData {
     Word(Ident),
     Punc(Punct),
     Group(Group),
+
+    TypeRef(Type),
     /*might want:
     	Token
     	...
@@ -209,6 +213,8 @@ macro_rules! impl_from_for_basicdata {
 }
 
 impl_from_for_basicdata! {
+    Type => BasicData::TypeRef,
+
     TokenTree => BasicData::Tree,
     Literal => BasicData::Literal,
     Ident => BasicData::Word,
@@ -243,6 +249,12 @@ impl From<Rc<dyn ObjectParser>> for ObjData {
 impl From<TokenTree> for Object {
     fn from(data: TokenTree) -> Self {
         Object::new(data,BasicType::Tree.into())
+    }
+}
+
+impl From<Type> for Object {
+    fn from(data: Type) -> Self {
+        Object::new(data,BasicType::TypeRef.into())
     }
 }
 

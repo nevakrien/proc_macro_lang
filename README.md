@@ -48,9 +48,12 @@ this can be fixed by making a type alias for int. if "+" calls "terminal int" wh
 
 a:term_int \[+\] b:int => ((int)a+b):int
 
-this solution is right recursive but crucially it is not left recursive.
+this solution is right recursive but crucially it is not left recursive. we could also take a specific parser for int. this might be the right call here since a lot of things that can parse to int use "+" for their own goals.
 
 
+a:int_parser \[+\] b:int => ((int)a+b):int
+
+this code would simply use the build in simple int parser to parse a.
 
 # Types
 

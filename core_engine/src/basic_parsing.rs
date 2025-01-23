@@ -346,9 +346,6 @@ impl DelParser{
 }
 
 
-// pub struct DelObjectParser()
-
-
 #[test]
 fn test_delimited_sequence_combinator() {
     let (buffer,mut state) = initialize_state("[1, 2, 3]").unwrap();

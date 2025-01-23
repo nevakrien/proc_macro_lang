@@ -1,10 +1,4 @@
-use crate::basic_parsing::AnyParser;
-use crate::basic_parsing::IntParser;
-use crate::basic_parsing::EndParser;
-use crate::basic_parsing::LiteralParser;
-use crate::basic_parsing::WordParser;
-use crate::basic_parsing::PuncParser;
-use crate::basic_parsing::GroupParser;
+use crate::basic_parsing::{AnyParser,LiteralParser,EndParser,IntParser,GroupParser,PuncParser,WordParser};
 use crate::types::BasicType;
 use crate::types::Type;
 use std::collections::BTreeMap;
@@ -53,9 +47,11 @@ impl<E: std::error::Error> PakeratError<E>{
 }
 
 ///result type used for internal cache managment
-pub type Pakerat<T,E = syn::Error> = Result<T,PakeratError<E>>;
+pub type Pakerat<T=Object,E = syn::Error> = Result<T,PakeratError<E>>;
 
-///basic parser combinator trait used mainly by object parser
+///core parser combinator trait used mainly by [crate::ObjectParser].
+///
+///the return type is [Pakerat] to facilitate the caching behivior use by [crate::name_space::DeferedParse]
 pub trait Combinator<T, E = syn::Error>
 where
     E: std::error::Error,
@@ -79,8 +75,15 @@ where
     }
 }
 
-///basic helper funcion for kick starting the parsing process
+///basic helper funcion for kick starting the parsing process (mainly used for testing)
 ///
+///```
+///use core_engine::combinator::{Combinator,initialize_state};
+///use core_engine::basic_parsing::IntParser;
+///
+///let (buffer,mut state) = initialize_state("5").unwrap();
+///let _obj = IntParser.parse(buffer.begin(),&mut state).unwrap(); 
+///```
 ///for now state does not really depend on the input text
 ///
 ///this may change in the future so we keep them paired here

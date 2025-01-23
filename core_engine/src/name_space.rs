@@ -17,54 +17,35 @@ use std::rc::Rc;
 use proc_macro2::Ident;
 use std::collections::HashMap;
 
-///used to store program name space. note that things should not really refer to this directly
 #[derive(Debug)]
-pub struct Scope<'a,T> where T : Clone{
-	pub map:HashMap<Ident,T>,
-	pub parent:Option<&'a Scope<'a, T>>,
+pub struct NameSpace<'a>{
+	pub map:HashMap<Ident,Object>,
+	pub parent:Option<&'a NameSpace<'a>>,
 }
 
-pub type TypeScope<'a> = Scope<'a,Type>;
-pub type ObjectScope<'a> = Scope<'a,Object>;
-// pub type ParserScope<'a> = Scope<'a,Rc<dyn ObjectParser>>;
-
-
-
-///used for implementing pakerat parsing
-#[derive(Debug)]
-pub struct FileNameSpace<>{
-	pub types : TypeScope<'static>,
-	pub objects : ObjectScope<'static>,
-} 
-
-impl Default for FileNameSpace{
+/// This is heavier than it may seem. See [`NameSpace::new_global`].
+impl Default for NameSpace<'_>{
 
 fn default() -> Self { 
-	FileNameSpace{
-		// type_info:default_type_info_map(),
-		types: TypeScope::new_global(),
-		objects: ObjectScope::new_global(),
-	}
+	NameSpace::new_global()
 }
 }
 
+pub type FileNameSpace = NameSpace<'static>;
 
-
-
-///parses a type based on the callers file scope.
-///
-///this function allows for recursive calling which is very powerful.
-///
-///it implements caching which will never break any valid peg parser and will never return wrong results.
-///
-///it detects all potential infinite loops by keeping track of all the pending calls.
-///
-///however it will still reject some grammers that are premisible in cfg.
-///
-///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+///holds a type to be parsed later in the **callers** scope using [DeferedParse::parse_pakerat]
 #[derive(Debug,Clone)]
 pub struct DeferedParse(pub Type,pub Ident);
 impl Combinator<Object> for DeferedParse{
+	///this function allows for recursive calling which is very powerful.
+	///
+	///it implements caching which will never break any valid peg parser and will never return wrong results.
+	///
+	///it detects all potential infinite loops by keeping track of all the pending calls.
+	///
+	///however it will still reject some grammers.
+	///for instance "expr + term => expr" would not work because it causes an infinite left recursive loop. 
+	///but "term + expr => expr" will work
 	fn parse_pakerat<'a>(&self, input: Cursor<'a>, state: &mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
 		// !!!Contract we can not leave pending entries that we created in the cache
 		//we also have to respect all recursive errors in parsers we call
@@ -175,13 +156,38 @@ macro_rules! insert_parsers {
     };
 }
 
+macro_rules! insert_types {
+    ($map:expr, { $($name:ident => $type:expr),* $(,)? }) => {
+        $(
+            let t : Type = ($type).into();
+            $map.insert(
+                Ident::new(stringify!($name), Span::mixed_site()),
+                t.into(),
+            );
+        )*
+    };
+}
 
-impl ObjectScope<'_>{
 
-	pub fn new_global()->ObjectScope<'static>{
+
+impl NameSpace<'_> {
+	///this function is relativly heavy. it constructs all the basic parsers types etc that should be in the global scope.
+	///
+	///it should only be called once per file
+	pub fn new_global()->NameSpace<'static>{
 		let mut map :HashMap<Ident,Object>= HashMap::new();
 		
-		 insert_parsers!(map, {
+		 insert_types!(map, {
+            any => BasicType::Tree,
+            lit => BasicType::Literal,
+            word => BasicType::Word,
+            punc => BasicType::Punc,
+            group => BasicType::Group,
+            end => BasicType::None,
+            int => BasicType::Int,
+        });
+
+		insert_parsers!(map, {
             any_parser => AnyParser,
             lit_parser => LiteralParser,
             word_parser => WordParser,
@@ -195,45 +201,10 @@ impl ObjectScope<'_>{
             brace_token_parser => DelTokenParser(Delimiter::Brace),
         });
 		
-		Scope{map,parent:None}
+		NameSpace{map,parent:None}
 	}
-}
 
-
-macro_rules! insert_types {
-    ($map:expr, { $($name:ident => $type:expr),* $(,)? }) => {
-        $(
-            
-            $map.insert(
-                Ident::new(stringify!($name), Span::mixed_site()),
-                ($type).into(),
-            );
-        )*
-    };
-}
-
-
-impl TypeScope<'_>{
-	pub fn new_global()->TypeScope<'static>{
-		let mut map :HashMap<Ident,Type>= HashMap::new();
-		
-		 insert_types!(map, {
-            any => BasicType::Tree,
-            lit => BasicType::Literal,
-            word => BasicType::Word,
-            punc => BasicType::Punc,
-            group => BasicType::Group,
-            end => BasicType::None,
-            int => BasicType::Int,
-        });
-		
-		Scope{map,parent:None}
-	}
-}
-
-
-impl<T> Scope<'_, T> where T : Clone {
-	pub fn get(&self, key:&Ident) -> Option<T>{
+	pub fn get(&self, key:&Ident) -> Option<Object>{
 		match self.map.get(key){
 			Some(x)=>Some(x.clone()),
 			None=>match self.parent{
@@ -245,8 +216,8 @@ impl<T> Scope<'_, T> where T : Clone {
 
 	//wana make sure the lifetimes are what i think they are
 	#[allow(clippy::needless_lifetimes)]
-	pub fn make_child<'b>(&'b self) -> Scope<'b, T>{
-		Scope{
+	pub fn make_child<'b>(&'b self) -> NameSpace<'b>{
+		NameSpace{
 			map:HashMap::new(),
 			parent:Some(self)
 		}
@@ -254,22 +225,23 @@ impl<T> Scope<'_, T> where T : Clone {
 
 	
 
-	pub fn capture_scope(&self) ->Scope<'static,T>{
+	pub fn capture_scope(&self) ->NameSpace<'static>{
 		let mut map = self.map.clone();
-		let mut cur : Option<&Scope<T>> = self.parent;
+		let mut cur : Option<&NameSpace> = self.parent;
 		while let Some(scope) = cur {
 			for (k,v) in scope.map.iter(){
 				map.entry(k.clone()).or_insert(v.clone());
 			}
 			cur=scope.parent;
 		}
-		Scope{map,parent:None}
+		NameSpace{map,parent:None}
 	}
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::combinator::initialize_state;
+    use crate::combinator::NonNanFloat;
+use crate::combinator::initialize_state;
 use crate::types::ObjData;
 use crate::types::BasicData;
 use super::*;
