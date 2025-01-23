@@ -18,7 +18,6 @@ use syn::buffer::TokenBuffer;
 #[cfg(test)]
 use crate::combinator::initialize_state;
 
-#[cfg(test)]
 use proc_macro2::TokenStream;
 
 fn parse_literal(input: Cursor) -> Result<(Cursor, Literal), syn::Error> {
@@ -270,8 +269,7 @@ impl Combinator<Object> for DelTokenParser{
 	fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object)>{
 		let (cursor,stream): (syn::buffer::Cursor<'a>, TokenStream) = self.parse_pakerat(input,state)?;
 		let v :Vec<Object>= stream.into_iter().map(|x| x.into()).collect();
-		let t: Type = BasicType::Tree.into();
-		let obj = Object::new(v,Type::Array(t.into()));
+		let obj = Object::new(v,self.type_info());
 		Ok((cursor,obj))
 	}
 }
@@ -357,6 +355,8 @@ fn test_delimited_sequence_combinator() {
     let cursor = buffer.begin();
     let combinator = DelTokenParser(Delimiter::Bracket);
 
+    let combinator : Box<dyn Combinator<TokenStream>>= Box::new(combinator);
+
     // Test parsing a delimited sequence
     match combinator.parse(cursor,&mut state) {
         Ok((next, token_stream)) => {
@@ -383,7 +383,7 @@ fn test_delimited_sequence_combinator() {
     let cursor = buffer.begin();
 
     let inner_combinator = Rc::new(DelTokenParser(Delimiter::Bracket));
-    let nested_combinator = DelCombParser(Delimiter::Parenthesis, inner_combinator);
+    let nested_combinator: DelCombParser<TokenStream> = DelCombParser(Delimiter::Parenthesis, inner_combinator);
 
     match nested_combinator.parse(cursor,&mut state) {
         Ok((next, token_stream)) => {
