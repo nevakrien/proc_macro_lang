@@ -1,3 +1,15 @@
+use crate::basic_parsing::get_end_del;
+use syn::__private::quote::spanned::Spanned;
+use crate::basic_parsing::DelParser;
+use crate::exact::MatchParser;
+use syn::buffer::TokenBuffer;
+use crate::name_space::DeferedParse;
+use crate::types::BasicData;
+use crate::types::ObjData;
+use crate::multi::Many0;
+use crate::multi::Many1;
+use crate::multi::Maybe;
+use proc_macro2::Delimiter;
 use crate::multi::OneOf;
 use crate::types::StructPair;
 use crate::name_space::FileNameSpace;
@@ -100,50 +112,97 @@ pub fn parse_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::
 
 }
 
-
-pub fn parse_internal_parser<'a>(_input:Cursor<'a>,_name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
-	todo!()
+#[derive(Debug,Clone,Copy)]
+enum Prefix{
+	Maybe,
+	Many0,
+	Many1,	
 }
 
-// pub fn parse_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<(Cursor<'a>,Rc<dyn ObjectParser>)>{
-// 	match input.ident() {
-// 	    None => {} 
-// 	    Some((i,cursor)) => {
-// 	    	match name_space.objects.get(&i) {
-// 	    	    None => {
-// 	    	    	let error = format!("unrecognized parser name {}",i);
-// 	    	    	return Err(syn::Error::new(i.span(),error))
-// 	    	    } 
-// 	    	    Some(obj) => {
-// 	    	    	match obj.data {
-// 	    	    		ObjData::Parser(parser) => return Ok((cursor,parser)),
-// 	    	    	    _ => {
-// 			    	    	let error = format!("expected a type alias of parser found {:?}",obj.type_info);
-// 			    	    	return Err(syn::Error::new(i.span(),error))
-// 			    	    } 
-// 	    	    	}
-// 	    	    },
-// 	    	}
-// 	    },
-// 	};
+pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
+	let mut prefixes = Vec::new();
 
-// 	match input.lifetime() {
-// 	    None => {} 
-// 	    Some((life,cursor)) => {
-// 	    	match name_space.types.get(&life.ident) {
-// 	    	    None => {
-// 	    	    	let error = format!("unrecognized type name {}",life.ident);
-// 	    	    	return Err(syn::Error::new(life.span(),error))
-// 	    	    } 
-// 	    	    Some(t) => return Ok((cursor,Rc::new(DeferedParse(t,life.ident)))),
-// 	    	}
-// 	    },
-// 	};
+	while let Some((punc,cursor)) = input.punct(){
+		input=cursor;
+		match punc.as_char() {
+			'?' => prefixes.push(Prefix::Maybe),
+			'*' => prefixes.push(Prefix::Many0),
+			'+' => prefixes.push(Prefix::Many1),
+		    _ => {}, //error handled by terminal parser
+		}
+	}
+
+	let mut parser = match input.group(Delimiter::Parenthesis) {
+	    None => match parse_terminal_parser(input,name_space)?{
+	    	None => return Err(syn::Error::new(input.span(),"expected parser")),
+	    	Some((cursor,parser)) => {
+	    		input = cursor;
+	    		parser
+	    	}
+	    },
+	    Some((x,_,cursor)) => {
+	    	match parse_parser(x,name_space)?{
+	    		Some((spot,parser)) => {
+	    			if !spot.eof(){
+	    				return Err(syn::Error::new(spot.span(),"expected )"))
+	    			}
+	    			input = cursor;
+	    			parser
+	    		},
+	    		None => return Err(syn::Error::new(x.span(),"expected parser"))
+	    	}
+	    },
+	};
+
+	for pre in prefixes.iter().rev(){
+		match pre{
+			Prefix::Maybe=> parser = Rc::new(Maybe::new(parser)),
+			Prefix::Many0=> parser = Rc::new(Many0(parser)),
+			Prefix::Many1=> parser = Rc::new(Many1(parser)),
+		}
+	}
+
+	Ok(Some((input,parser)))
+}
+
+pub fn parse_terminal_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
+	if let Some((punc,cursor)) = input.punct() {
+		if punc.as_char() == '#'{
+			if let Some((x,del,del_span,cursor)) = cursor.any_group(){
+				match parse_parser(x,name_space)?{
+					None => return Err(syn::Error::new(del_span.__span(),"expected a parser")),
+					Some((end,parser)) => {
+						if !end.eof(){
+		    				return Err(syn::Error::new(end.span(),format!("expected {}",get_end_del(del))))
+		    			}
+						let parser = Rc::new(DelParser(del,parser));
+						return Ok(Some((cursor,parser)))
+					}
+				}
+			}
+		}else {
+			return Err(syn::Error::new(punc.span(),"unexpected charchter"))
+		}
+	}
 	
-// 	//need to also cover token literals and similar things
-// 	todo!()
+	if let Some((id,cursor)) = input.ident(){
+		match name_space.get(&id) {
+		    None => return Err(syn::Error::new(id.span(),format!("unrecognized name {}",id))),
+		    Some(obj) => match obj.data {
+		    	ObjData::Basic(BasicData::TypeRef(t)) =>{
+		    		let parser = Rc::new(DeferedParse(t,id));
+		    		return Ok(Some((cursor,parser)))
+		    	}
+		    	ObjData::Parser(parser) => return Ok(Some((cursor,parser))),
+		        _ => return Err(syn::Error::new(id.span(),format!("{} is of type {:?} which is not a type alias for Type or Parser",id,obj.type_info))),
+		    }
+		}
+	}
 
-// 	// Err(
-// 	// 	syn::Error::new(input.span(),"expected a parser or type")
-// 	// )
-// }
+	if let Some((x,_,cursor)) = input.group(Delimiter::Bracket){
+		let parser = MatchParser(TokenBuffer::new2(x.token_stream()));
+		return Ok(Some((cursor,Rc::new(parser))))
+	}
+
+	Err(syn::Error::new(input.span(),"expected a name or one of [...] #[...] #{...} #(...)"))
+}
