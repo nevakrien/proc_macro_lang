@@ -1,39 +1,108 @@
-use crate::name_space::DeferedParse;
-use crate::types::ObjData;
+use crate::multi::OneOf;
+use crate::types::StructPair;
 use crate::name_space::FileNameSpace;
-use crate::combinator::State;
 use crate::ObjectParser;
 use std::rc::Rc;
 use proc_macro2::Ident;
 use crate::types::{StructParser};
 use syn::buffer::Cursor;
 
-pub fn parse_pattern<'a>(_input:Cursor<'a>,_state: &mut State<'a>) -> syn::Result<(Cursor<'a>,StructParser)>{
-	todo!()
+pub fn parse_pattern<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<(Cursor<'a>,StructParser)>{
+	let mut ans = Vec::new();
+	while let Some((cursor,pair)) = parse_pair(input,name_space)?{
+		input=cursor;
+		ans.push(pair)
+	}
+	let parser = StructParser::new(ans.into())?;
+	Ok((input,parser))
 }
 
+pub fn parse_pair<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,StructPair)>>{
+	let capture = match parse_name_capture(input){
+		None => None,
+		Some((cursor,x)) =>{
+			input = cursor;
+			Some(x)
+		}
+	};
 
-///looks for "name :" definitions are expected to come after.
-///would ignore any lone "name" thats not imidiatly flanked by punctioation
-pub fn parse_name_capture<'a>(input:Cursor<'a>) ->syn::Result<(Cursor<'a>,Option<Ident>)>{
+	match parse_internal_parser(input,name_space)?{
+		Some((cursor,parser)) =>  Ok(Some((cursor,StructPair{capture,parser}))),
+		None => {
+			if let Some(_ident) = capture{
+				Err(syn::Error::new(input.span(),"expected parser after capture decleration"))
+			}else{
+				Ok(None)
+			}
+		}
+	}
+}
+
+pub fn parse_name_capture<'a>(input:Cursor<'a>) ->Option<(Cursor<'a>,Ident)>{
 	let (ans,cursor) = match input.ident(){
-		None => return Ok((input,None)),
+		None => return None,
 		Some(x) => x
 	};
 
-	//this here is sketchy since a fail here is not necirly a faily everywhere
-	//for instance a one of would raise this error since a | b is read as potentially a : b
-	let (dots_exist,cursor) = match cursor.punct(){
-		None => return Ok((input,None)),
-		Some((p,cursor)) => (p.as_char()==':',cursor),
-	};
+	match cursor.punct(){
+		None =>  None,
+		Some((p,cursor)) => {
+			if p.as_char()==':'{
+				Some((cursor,ans))
+			} else {
+				None
+			}
+		}
+	}	
+}
 
-	if !dots_exist {
-		let error = syn::Error::new(cursor.span(),"expected : after capture name");
-		return Err(error);
+//looks for an | clause
+pub fn parse_or<'a>(input:Cursor<'a>) ->Option<Cursor<'a>>{
+	match input.punct(){
+		None =>  None,
+		Some((p,cursor)) => {
+			if p.as_char()=='|'{
+				Some(cursor)
+			} else {
+				None
+			}
+		}
+	}	
+}
+
+pub fn parse_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
+	let mut or_stack = Vec::new();
+	
+	match parse_internal_parser(input,name_space)?{
+		Some((cursor,x)) => {
+			input = cursor;
+			or_stack.push(x);
+		},
+		None => return Ok(None)
 	}
 
-	Ok((cursor,Some(ans)))
+	while let Some(cursor) = parse_or(input) {
+		input = cursor;
+		match parse_internal_parser(input,name_space)?{
+			Some((cursor,x)) => {
+				or_stack.push(x);
+				input = cursor;
+			},
+			None=> return Err(syn::Error::new(input.span(),"expected a parser after |"))
+		}
+	}
+
+	match or_stack.len() {
+		0 => return Ok(None),
+		1 => return Ok(Some((input,or_stack.into_iter().next().unwrap()))),
+		2_usize.. => Ok(Some((input,Rc::new(OneOf::new(or_stack.into())))))
+	}
+
+}
+
+
+pub fn parse_internal_parser<'a>(_input:Cursor<'a>,_name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
+	todo!()
 }
 
 // pub fn parse_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<(Cursor<'a>,Rc<dyn ObjectParser>)>{

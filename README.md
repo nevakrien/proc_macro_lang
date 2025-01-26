@@ -55,6 +55,19 @@ a:int_parser \[+\] b:int => ((int)a+b):int
 
 this code would simply use the build in simple int parser to parse a.
 
+# Grammer for basic parse patterns
+
+1. pattern = \*(?capture + parser) 
+2. capture = name + \[:\] 
+3. \[+\] + parser => many1(parser)
+4. \[\*\] + parser => many0(parser)
+5. \[?\] + parser => maybe(parser)
+6. "\[" tokens "\]" => parse_exact(tokens)
+7. \#(parser) => parse_delimited(paren,parser)
+8. parser_a | parser_b => oneof(parser_a,parser_b)
+9. name => lookup_existing(name)
+
+
 # Types
 
 ### rust ast:
