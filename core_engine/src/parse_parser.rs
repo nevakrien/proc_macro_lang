@@ -135,7 +135,11 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 
 	let mut parser = match input.group(Delimiter::Parenthesis) {
 	    None => match parse_terminal_parser(input,name_space)?{
-	    	None => return Err(syn::Error::new(input.span(),"expected parser")),
+	    	None => return if !prefixes.is_empty() {
+	    		 Err(syn::Error::new(input.span(),"expected parser"))
+	    	} else {
+	    		Ok(None)
+	    	},
 	    	Some((cursor,parser)) => {
 	    		input = cursor;
 	    		parser
@@ -166,6 +170,7 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 	Ok(Some((input,parser)))
 }
 
+//handles errors badly not returning non ever...
 pub fn parse_terminal_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
 	if let Some((punc,cursor)) = input.punct() {
 		if punc.as_char() == '#'{
