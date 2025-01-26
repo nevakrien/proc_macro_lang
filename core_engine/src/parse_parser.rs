@@ -122,14 +122,15 @@ enum Prefix{
 pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
 	let mut prefixes = Vec::new();
 
-	while let Some((punc,cursor)) = input.punct(){
-		input=cursor;
+	while let Some((punc,cursor)) = input.punct(){		
 		match punc.as_char() {
 			'?' => prefixes.push(Prefix::Maybe),
 			'*' => prefixes.push(Prefix::Many0),
 			'+' => prefixes.push(Prefix::Many1),
 		    _ => break, //error handled by terminal parser
 		}
+
+		input=cursor;
 	}
 
 	let mut parser = match input.group(Delimiter::Parenthesis) {
