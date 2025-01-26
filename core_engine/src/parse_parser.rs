@@ -128,7 +128,7 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 			'?' => prefixes.push(Prefix::Maybe),
 			'*' => prefixes.push(Prefix::Many0),
 			'+' => prefixes.push(Prefix::Many1),
-		    _ => {}, //error handled by terminal parser
+		    _ => break, //error handled by terminal parser
 		}
 	}
 
