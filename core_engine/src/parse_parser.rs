@@ -170,7 +170,6 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 	Ok(Some((input,parser)))
 }
 
-//handles errors badly not returning non ever...
 pub fn parse_terminal_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
 	if let Some((punc,cursor)) = input.punct() {
 		if punc.as_char() == '#'{
@@ -187,7 +186,7 @@ pub fn parse_terminal_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> 
 				}
 			}
 		}else {
-			return Err(syn::Error::new(punc.span(),"unexpected charchter"))
+			return Ok(None)
 		}
 	}
 	
@@ -210,5 +209,140 @@ pub fn parse_terminal_parser<'a>(input:Cursor<'a>,name_space:&FileNameSpace) -> 
 		return Ok(Some((cursor,Rc::new(parser))))
 	}
 
-	Err(syn::Error::new(input.span(),"expected a name or one of [...] #[...] #{...} #(...)"))
+	return Ok(None)
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::combinator::Combinator;
+use super::*;
+    use crate::combinator::initialize_state;
+
+    #[test]
+    fn test_zero_or_more_parser() {
+        let (pattern_input, state) = initialize_state("*[42]").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input, mut valid_state) = initialize_state("42 42 42").unwrap();
+        let (remaining_cursor, _) = struct_parser.parse(valid_input.begin(), &mut valid_state).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (empty_input, mut empty_state) = initialize_state("").unwrap();
+        struct_parser.parse(empty_input.begin(), &mut empty_state).unwrap();
+
+        let (invalid_input, mut invalid_state) = initialize_state("lol invalid").unwrap();
+        struct_parser.parse(invalid_input.begin(), &mut invalid_state).unwrap();
+    }
+
+    #[test]
+    fn test_one_or_more_parser() {
+        let (pattern_input, state) = initialize_state("+[42]").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input, mut valid_state) = initialize_state("42 42 42").unwrap();
+        let (remaining_cursor, _) = struct_parser.parse(valid_input.begin(), &mut valid_state).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (empty_input, mut empty_state) = initialize_state("").unwrap();
+        assert!(struct_parser.parse(empty_input.begin(), &mut empty_state).is_err());
+    }
+
+    #[test]
+    fn test_choice_parser_hard() {
+        let (pattern_input, state) = initialize_state("[42] | name").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input_1, mut valid_state_1) = initialize_state("42").unwrap();
+        struct_parser.parse(valid_input_1.begin(), &mut valid_state_1).unwrap();
+
+        let (valid_input_2, mut valid_state_2) = initialize_state("Carlos").unwrap();
+        struct_parser.parse(valid_input_2.begin(), &mut valid_state_2).unwrap();
+
+        let (invalid_input, mut invalid_state) = initialize_state(";invalid").unwrap();
+        assert!(struct_parser.parse(invalid_input.begin(), &mut invalid_state).is_err());
+    }
+
+    #[test]
+    fn test_choice_parser() {
+        let (pattern_input, state) = initialize_state("([42] | name)").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input_1, mut valid_state_1) = initialize_state("42").unwrap();
+        struct_parser.parse(valid_input_1.begin(), &mut valid_state_1).unwrap();
+
+        let (valid_input_2, mut valid_state_2) = initialize_state("Carlos").unwrap();
+        struct_parser.parse(valid_input_2.begin(), &mut valid_state_2).unwrap();
+
+        let (invalid_input, mut invalid_state) = initialize_state(";invalid").unwrap();
+        assert!(struct_parser.parse(invalid_input.begin(), &mut invalid_state).is_err());
+    }
+
+    #[test]
+    fn test_parenthesized_choice_parser() {
+        let (pattern_input, state) = initialize_state("?([a] | [b])").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input_1, mut valid_state_1) = initialize_state("a").unwrap();
+        struct_parser.parse(valid_input_1.begin(), &mut valid_state_1).unwrap();
+
+        let (valid_input_2, mut valid_state_2) = initialize_state("b").unwrap();
+        struct_parser.parse(valid_input_2.begin(), &mut valid_state_2).unwrap();
+
+        let (empty_input, mut empty_state) = initialize_state("").unwrap();
+        struct_parser.parse(empty_input.begin(), &mut empty_state).unwrap();
+    }
+
+    #[test]
+    fn test_exact_token_literal() {
+        let (pattern_input, state) = initialize_state("[exact]").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input, mut valid_state) = initialize_state("exact").unwrap();
+        let (remaining_cursor, _) = struct_parser.parse(valid_input.begin(), &mut valid_state).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (invalid_input, mut invalid_state) = initialize_state("different").unwrap();
+        assert!(struct_parser.parse(invalid_input.begin(), &mut invalid_state).is_err());
+    }
+
+    #[test]
+    fn test_delimited_parser() {
+        let (pattern_input, state) = initialize_state("#([42])").unwrap();
+
+        let pattern_cursor = pattern_input.begin();
+        let file_name_space = state.file.borrow();
+        let (remaining_cursor, struct_parser) = parse_pattern(pattern_cursor, &file_name_space).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (valid_input, mut valid_state) = initialize_state("(42)").unwrap();
+        let (remaining_cursor, _) = struct_parser.parse(valid_input.begin(), &mut valid_state).unwrap();
+        assert!(remaining_cursor.eof());
+
+        let (invalid_input, mut invalid_state) = initialize_state("[42]").unwrap();
+        assert!(struct_parser.parse(invalid_input.begin(), &mut invalid_state).is_err());
+    }
 }

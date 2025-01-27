@@ -191,6 +191,7 @@ impl NameSpace<'_> {
             any_parser => AnyParser,
             lit_parser => LiteralParser,
             word_parser => WordParser,
+            name => WordParser,
             punc_parser => PuncParser,
             group_parser => GroupParser,
             end_parser => EndParser,
