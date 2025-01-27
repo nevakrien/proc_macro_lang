@@ -38,7 +38,7 @@ pub fn parse_pair<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Re
 		}
 	};
 
-	match parse_internal_parser(input,name_space)?{
+	match parse_parser(input,name_space)?{
 		Some((cursor,parser)) =>  Ok(Some((cursor,StructPair{capture,parser}))),
 		None => {
 			if let Some(_ident) = capture{
