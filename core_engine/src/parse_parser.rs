@@ -1,3 +1,4 @@
+use crate::multi::Recognize;
 use crate::basic_parsing::get_end_del;
 use syn::__private::quote::spanned::Spanned;
 use crate::basic_parsing::DelParser;
@@ -116,10 +117,11 @@ pub fn parse_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::
 enum Prefix{
 	Maybe,
 	Many0,
-	Many1,	
+	Many1,
+	Recognize
 }
 
-pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
+fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace) -> syn::Result<Option<(Cursor<'a>,Rc<dyn ObjectParser>)>>{
 	let mut prefixes = Vec::new();
 
 	while let Some((punc,cursor)) = input.punct(){		
@@ -127,6 +129,7 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 			'?' => prefixes.push(Prefix::Maybe),
 			'*' => prefixes.push(Prefix::Many0),
 			'+' => prefixes.push(Prefix::Many1),
+			'$' => prefixes.push(Prefix::Recognize),
 		    _ => break, //error handled by terminal parser
 		}
 
@@ -164,6 +167,7 @@ pub fn parse_internal_parser<'a>(mut input:Cursor<'a>,name_space:&FileNameSpace)
 			Prefix::Maybe=> parser = Rc::new(Maybe::new(parser)),
 			Prefix::Many0=> parser = Rc::new(Many0(parser)),
 			Prefix::Many1=> parser = Rc::new(Many1(parser)),
+			Prefix::Recognize => parser = Rc::new(Recognize(parser)),
 		}
 	}
 
@@ -331,7 +335,7 @@ use super::*;
 
     #[test]
     fn test_delimited_parser() {
-        let (pattern_input, state) = initialize_state("#([42])").unwrap();
+        let (pattern_input, state) = initialize_state("$#([42])").unwrap();
 
         let pattern_cursor = pattern_input.begin();
         let file_name_space = state.file.borrow();

@@ -129,9 +129,32 @@ impl ObjectParser for Maybe{
 }
 
 #[derive(Debug)]
-pub struct Recognize(pub Box<[Rc<dyn ObjectParser>]>);
+pub struct Recognize(pub Rc<dyn ObjectParser>);
 
 impl Combinator<Object> for Recognize{
+    fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
+       let (cursor,_obj) = self.0.parse_pakerat(input,state)?;
+
+        let mut cursor2 = input;
+        let mut ans = Vec::with_capacity(1);
+        while cursor2!=cursor{
+            let (tree,new) = cursor2.token_tree().unwrap();
+            ans.push(tree);
+            cursor2=new;
+        }
+        
+        Ok((cursor,Object::from_iter(ans.into_iter(),self.type_info())))
+    }
+}
+
+impl ObjectParser for Recognize{
+    fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Tree.into()))}
+}
+
+#[derive(Debug)]
+pub struct RecognizeMany(pub Box<[Rc<dyn ObjectParser>]>);
+
+impl Combinator<Object> for RecognizeMany{
     fn parse_pakerat<'a>(&self, input: Cursor<'a>,state:&mut State<'a>) -> Pakerat<(Cursor<'a>, Object), syn::Error> {
         let mut cursor = input;
         for parser in &self.0 {
@@ -152,7 +175,7 @@ impl Combinator<Object> for Recognize{
     }
 }
 
-impl ObjectParser for Recognize{
+impl ObjectParser for RecognizeMany{
     fn type_info(&self) ->Type { Type::Array(Rc::new(BasicType::Tree.into()))}
 }
 
@@ -255,7 +278,7 @@ mod tests {
 
     #[test]
     fn test_recognize_combination() {
-        let recognize = Recognize(Box::new([
+        let recognize = RecognizeMany(Box::new([
             Rc::new(LiteralParser) as Rc<dyn ObjectParser>,
             Rc::new(WordParser),
             Rc::new(PuncParser),
@@ -289,7 +312,7 @@ mod tests {
 
     #[test]
     fn test_recognize_fail() {
-        let recognize = Recognize(Box::new([
+        let recognize = RecognizeMany(Box::new([
             Rc::new(LiteralParser) as Rc<dyn ObjectParser>,
             Rc::new(WordParser),
             Rc::new(PuncParser),
